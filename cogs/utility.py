@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import time
 import random
 import asyncio
@@ -249,12 +250,53 @@ class GiveawayView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         if ended:
+            # Only the Enter button is disabled. The Entries button keeps working.
             for child in self.children:
-                child.disabled = True
+                if getattr(child, "custom_id", None) == "utility_giveaway_enter":
+                    child.disabled = True
 
     @discord.ui.button(label="Enter Giveaway", emoji="🎉", style=discord.ButtonStyle.primary, custom_id="utility_giveaway_enter")
     async def enter_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.handle_entry(interaction)
+
+    @discord.ui.button(label="Entries", emoji="👥", style=discord.ButtonStyle.secondary, custom_id="utility_giveaway_entries")
+    async def entries_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.show_entries(interaction, interaction.message.id, 0, edit=False)
+
+
+class EntriesPageButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"utility_gw_entries:(?P<mid>\d+):(?P<page>\d+):(?P<dir>[pn])"
+):
+    """Previous / Next buttons for the entries list.
+    The giveaway ID and target page are stored inside the custom_id, so these buttons
+    keep working after the bot restarts or redeploys."""
+
+    def __init__(self, mid: int, page: int, label: str, direction: str, disabled: bool = False):
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"utility_gw_entries:{mid}:{page}:{direction}",
+                disabled=disabled
+            )
+        )
+        self.mid = mid
+        self.page = page
+        self.direction = direction
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match, /):
+        return cls(int(match["mid"]), int(match["page"]), item.label or "", match["dir"], item.disabled)
+
+    async def callback(self, interaction: discord.Interaction):
+        cog = interaction.client.get_cog("UtilityCog")
+        if cog is None:
+            await interaction.response.send_message(
+                embed=error_embed("Unavailable", "Please try again in a moment."), ephemeral=True
+            )
+            return
+        await cog.show_entries(interaction, self.mid, self.page, edit=True)
 
 
 # -------------------------------------------------------------
@@ -267,7 +309,9 @@ class UtilityCog(commands.Cog):
         self.store = GiveawayStore()
 
     async def cog_load(self):
+        # Persistent buttons: these are re-registered on every start, so they survive redeploys.
         self.bot.add_view(GiveawayView(self))
+        self.bot.add_dynamic_items(EntriesPageButton)
         self.daily_revenue_log.start()
         self.giveaway_checker.start()
 
@@ -646,6 +690,44 @@ class UtilityCog(commands.Cog):
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    async def show_entries(self, interaction: discord.Interaction, mid: int, page: int, edit: bool):
+        """Shows who entered: one mention per line, 10 lines per page."""
+        doc = await self.store.get(mid)
+        if not doc:
+            embed = error_embed("Giveaway Not Found", "This giveaway no longer exists.")
+            if edit:
+                await interaction.response.edit_message(embed=embed, view=None)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        entries = list(doc.get("entries", []))
+        per_page = 10
+        total_pages = max(1, math.ceil(len(entries) / per_page))
+        page = max(0, min(page, total_pages - 1))
+        chunk = entries[page * per_page:(page + 1) * per_page]
+
+        embed = discord.Embed(
+            title=f"Entries - {doc['prize']}",
+            description="\n".join(f"<@{uid}>" for uid in chunk) if chunk else "No one has entered yet.",
+            color=COLOR_PURPLE
+        )
+        embed.set_footer(text=f"Page {page + 1}/{total_pages} • {len(entries)} entries")
+
+        kwargs = {"embed": embed}
+        if total_pages > 1:
+            view = discord.ui.View(timeout=None)
+            view.add_item(EntriesPageButton(mid, max(page - 1, 0), "◀ Previous", "p", disabled=(page == 0)))
+            view.add_item(EntriesPageButton(mid, min(page + 1, total_pages - 1), "Next ▶", "n", disabled=(page >= total_pages - 1)))
+            kwargs["view"] = view
+        elif edit:
+            kwargs["view"] = None
+
+        if edit:
+            await interaction.response.edit_message(**kwargs)
+        else:
+            await interaction.response.send_message(ephemeral=True, **kwargs)
+
     async def get_giveaway_message(self, doc: dict) -> Optional[discord.Message]:
         channel = self.bot.get_channel(doc["channel_id"])
         if channel is None:
@@ -663,7 +745,7 @@ class UtilityCog(commands.Cog):
         winner_ids = random.sample(entries, min(doc["winners"], len(entries))) if entries else []
 
         # Mark as ended first so the checker never ends it twice
-        await self.store.update(doc["_id"], {"ended": True, "winner_ids": winner_ids})
+        await self.store.update(doc["_id"], {"ended": True, "winner_ids": winner_ids, "all_winner_ids": winner_ids})
 
         message = await self.get_giveaway_message(doc)
         if message is None:
@@ -938,6 +1020,147 @@ class UtilityCog(commands.Cog):
             embed=discord.Embed(
                 title="Giveaway Deleted",
                 description=f"The giveaway for **{doc['prize']}** (`{mid}`) was deleted. No winners were picked.",
+                color=COLOR_GREEN
+            ),
+            ephemeral=True
+        )
+
+    # ---- /giveaway end ----
+    @giveaway.command(name="end", description="End a giveaway now and pick winners.")
+    @app_commands.describe(message_id="The giveaway message ID (or message link).")
+    async def giveaway_end(self, interaction: discord.Interaction, message_id: str):
+        if not self.can_manage(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                ephemeral=True
+            )
+            return
+
+        mid = parse_message_id(message_id)
+        if mid is None:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid Message ID", "Please enter a valid message ID or message link."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        doc = await self.store.get(mid)
+        if not doc or doc["guild_id"] != interaction.guild.id:
+            await interaction.followup.send(
+                embed=error_embed("Giveaway Not Found", f"No giveaway with message ID `{mid}` was found in this server."),
+                ephemeral=True
+            )
+            return
+        if doc.get("ended"):
+            await interaction.followup.send(
+                embed=error_embed("Already Ended", "This giveaway already ended. Use `/giveaway reroll` to pick a new winner."),
+                ephemeral=True
+            )
+            return
+
+        await self.end_giveaway(doc)
+
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="Giveaway Ended",
+                description=f"The giveaway for **{doc['prize']}** (`{mid}`) was ended and the winners were picked.",
+                color=COLOR_GREEN
+            ),
+            ephemeral=True
+        )
+
+    # ---- /giveaway reroll ----
+    @giveaway.command(name="reroll", description="Pick new winner(s) for an ended giveaway.")
+    @app_commands.describe(
+        message_id="The giveaway message ID (or message link).",
+        winners="How many new winners to pick (default 1)."
+    )
+    async def giveaway_reroll(
+        self,
+        interaction: discord.Interaction,
+        message_id: str,
+        winners: app_commands.Range[int, 1, 20] = 1
+    ):
+        if not self.can_manage(interaction):
+            await interaction.response.send_message(
+                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                ephemeral=True
+            )
+            return
+
+        mid = parse_message_id(message_id)
+        if mid is None:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid Message ID", "Please enter a valid message ID or message link."),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        doc = await self.store.get(mid)
+        if not doc or doc["guild_id"] != interaction.guild.id:
+            await interaction.followup.send(
+                embed=error_embed("Giveaway Not Found", f"No giveaway with message ID `{mid}` was found in this server."),
+                ephemeral=True
+            )
+            return
+        if not doc.get("ended"):
+            await interaction.followup.send(
+                embed=error_embed("Still Running", "This giveaway has not ended yet. Use `/giveaway end` first."),
+                ephemeral=True
+            )
+            return
+
+        # Do not pick anyone who already won in this giveaway
+        previous = list(doc.get("all_winner_ids", doc.get("winner_ids", [])))
+        candidates = [e for e in doc.get("entries", []) if e not in previous]
+        if not candidates:
+            await interaction.followup.send(
+                embed=error_embed("No Entries Left", "There is no one left to pick. Everyone who entered already won."),
+                ephemeral=True
+            )
+            return
+
+        new_winners = random.sample(candidates, min(int(winners), len(candidates)))
+        await self.store.update(mid, {"winner_ids": new_winners, "all_winner_ids": previous + new_winners})
+        doc["winner_ids"] = new_winners
+
+        message = await self.get_giveaway_message(doc)
+        if message is None:
+            await interaction.followup.send(
+                embed=error_embed("Message Not Found", "I could not find the giveaway message, so I could not announce the new winner(s)."),
+                ephemeral=True
+            )
+            return
+
+        try:
+            await message.edit(
+                embed=self.build_giveaway_embed(doc, ended=True, winner_ids=new_winners),
+                view=GiveawayView(self, ended=True)
+            )
+        except Exception as e:
+            print(f"[Giveaway Reroll] Could not edit message {mid}: {e}")
+
+        mentions = " ".join(f"<@{w}>" for w in new_winners)
+        try:
+            await message.reply(
+                content=mentions,
+                embed=discord.Embed(
+                    title="🎉 Giveaway Rerolled",
+                    description=f"New winner(s): {mentions}\nCongratulations! You won **{doc['prize']}**.",
+                    color=COLOR_GREEN
+                )
+            )
+        except Exception as e:
+            print(f"[Giveaway Reroll] Could not announce for {mid}: {e}")
+
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="Giveaway Rerolled",
+                description=f"Picked {len(new_winners)} new winner(s) for **{doc['prize']}**.",
                 color=COLOR_GREEN
             ),
             ephemeral=True
