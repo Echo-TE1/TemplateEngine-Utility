@@ -319,6 +319,26 @@ class UtilityCog(commands.Cog):
         self.daily_revenue_log.cancel()
         self.giveaway_checker.cancel()
 
+    # OWNER LOCK: every slash command in this cog (including /giveaway subcommands)
+    # is hard-coded to BOT_OWNER_ID. Buttons (Enter / Entries) stay public on purpose.
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == BOT_OWNER_ID:
+            return True
+        try:
+            await interaction.response.send_message(
+                embed=error_embed("Permission Denied", f"These commands can only be used by the bot owner (`{BOT_OWNER_ID}`)."),
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"[Owner Check Error] {e}")
+        return False
+
+    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        # The owner check already replied, so ignore that failure quietly.
+        if isinstance(error, app_commands.CheckFailure):
+            return
+        print(f"[App Command Error] {error}")
+
     # =============================================================
     # /ping
     # =============================================================
@@ -603,16 +623,12 @@ class UtilityCog(commands.Cog):
     giveaway = app_commands.Group(
         name="giveaway",
         description="Create, edit and delete giveaways.",
-        guild_only=True,
-        default_permissions=discord.Permissions(manage_guild=True)
+        guild_only=True
     )
 
     @staticmethod
     def can_manage(interaction: discord.Interaction) -> bool:
-        if interaction.user.id == BOT_OWNER_ID:
-            return True
-        perms = interaction.permissions
-        return bool(perms and (perms.manage_guild or perms.administrator))
+        return interaction.user.id == BOT_OWNER_ID
 
     def build_giveaway_embed(self, doc: dict, ended: bool = False, winner_ids: Optional[list] = None) -> discord.Embed:
         end_ts = int(doc["end_ts"])
@@ -813,7 +829,7 @@ class UtilityCog(commands.Cog):
     ):
         if not self.can_manage(interaction):
             await interaction.response.send_message(
-                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                embed=error_embed("Permission Denied", "Only the bot owner can use giveaway commands."),
                 ephemeral=True
             )
             return
@@ -890,7 +906,7 @@ class UtilityCog(commands.Cog):
     ):
         if not self.can_manage(interaction):
             await interaction.response.send_message(
-                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                embed=error_embed("Permission Denied", "Only the bot owner can use giveaway commands."),
                 ephemeral=True
             )
             return
@@ -984,7 +1000,7 @@ class UtilityCog(commands.Cog):
     async def giveaway_delete(self, interaction: discord.Interaction, message_id: str):
         if not self.can_manage(interaction):
             await interaction.response.send_message(
-                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                embed=error_embed("Permission Denied", "Only the bot owner can use giveaway commands."),
                 ephemeral=True
             )
             return
@@ -1031,7 +1047,7 @@ class UtilityCog(commands.Cog):
     async def giveaway_end(self, interaction: discord.Interaction, message_id: str):
         if not self.can_manage(interaction):
             await interaction.response.send_message(
-                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                embed=error_embed("Permission Denied", "Only the bot owner can use giveaway commands."),
                 ephemeral=True
             )
             return
@@ -1085,7 +1101,7 @@ class UtilityCog(commands.Cog):
     ):
         if not self.can_manage(interaction):
             await interaction.response.send_message(
-                embed=error_embed("Permission Denied", "You need the **Manage Server** permission to use giveaway commands."),
+                embed=error_embed("Permission Denied", "Only the bot owner can use giveaway commands."),
                 ephemeral=True
             )
             return
