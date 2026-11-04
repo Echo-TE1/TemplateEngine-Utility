@@ -545,8 +545,9 @@ def parse_role_ids(text: str):
     return list(dict.fromkeys(ids)), bad
 
 
-# Discord allows at most 25 options in one slash command. name, action, type, allowed_roles and duration use 5,
-# so 20 permissions fit. Format: option name -> (label shown in replies, PermissionOverwrite attribute).
+# Discord allows at most 25 options in one slash command. name, action, type, category, allowed_roles and
+# duration use 6, so 19 permissions fit. Only basic permissions are offered, nothing admin-like.
+# Format: option name -> (label shown in replies, PermissionOverwrite attribute).
 CHANNEL_PERMISSION_OPTIONS = {
     "view_channel": ("View Channel", "view_channel"),
     "send_messages": ("Send Messages", "send_messages"),
@@ -555,19 +556,32 @@ CHANNEL_PERMISSION_OPTIONS = {
     "attach_files": ("Attach Files", "attach_files"),
     "add_reactions": ("Add Reactions", "add_reactions"),
     "use_external_emojis": ("Use External Emojis", "use_external_emojis"),
-    "mention_everyone": ("Mention Everyone", "mention_everyone"),
-    "manage_messages": ("Manage Messages", "manage_messages"),
-    "manage_channels": ("Manage Channel", "manage_channels"),
-    "manage_permissions": ("Manage Permissions", "manage_permissions"),
+    "use_external_stickers": ("Use External Stickers", "use_external_stickers"),
     "create_public_threads": ("Create Public Threads", "create_public_threads"),
     "send_messages_in_threads": ("Send Messages In Threads", "send_messages_in_threads"),
     "use_application_commands": ("Use Application Commands", "use_application_commands"),
-    "create_instant_invite": ("Create Invite", "create_instant_invite"),
+    "send_polls": ("Send Polls", "send_polls"),
+    "send_voice_messages": ("Send Voice Messages", "send_voice_messages"),
     "connect": ("Connect", "connect"),
     "speak": ("Speak", "speak"),
     "stream": ("Stream", "stream"),
-    "mute_members": ("Mute Members", "mute_members"),
-    "move_members": ("Move Members", "move_members"),
+    "use_voice_activation": ("Use Voice Activity", "use_voice_activation"),
+    "use_soundboard": ("Use Soundboard", "use_soundboard"),
+    "request_to_speak": ("Request To Speak", "request_to_speak"),
+}
+
+# What every allowed role gets by default: basic permissions only (see, read, write, talk).
+# Permissions you set in the command win over these.
+DEFAULT_ROLE_PERMISSIONS = {
+    "view_channel": True,
+    "send_messages": True,
+    "read_message_history": True,
+    "add_reactions": True,
+    "embed_links": True,
+    "attach_files": True,
+    "connect": True,
+    "speak": True,
+    "use_voice_activation": True,
 }
 
 
@@ -756,6 +770,7 @@ class UtilityCog(commands.Cog):
         name="Channel name.",
         action="What kind of channel to create.",
         channel_type="Normal stays forever. Temporary is deleted automatically.",
+        category="Category to put the channel in (optional).",
         allowed_roles="Roles that get access (mention them or paste IDs). Empty = permissions apply to @everyone.",
         duration="Temporary only: 1m, 1h, 1d, 1w, 1mo or 1year.",
         **{key: f"{label}: true = allow, false = deny, empty = default." for key, (label, _) in CHANNEL_PERMISSION_OPTIONS.items()}
@@ -780,6 +795,7 @@ class UtilityCog(commands.Cog):
         name: app_commands.Range[str, 1, 100],
         action: app_commands.Choice[str],
         channel_type: app_commands.Choice[str],
+        category: Optional[discord.CategoryChannel] = None,
         allowed_roles: Optional[str] = None,
         duration: Optional[str] = None,
         view_channel: Optional[bool] = None,
@@ -789,19 +805,18 @@ class UtilityCog(commands.Cog):
         attach_files: Optional[bool] = None,
         add_reactions: Optional[bool] = None,
         use_external_emojis: Optional[bool] = None,
-        mention_everyone: Optional[bool] = None,
-        manage_messages: Optional[bool] = None,
-        manage_channels: Optional[bool] = None,
-        manage_permissions: Optional[bool] = None,
+        use_external_stickers: Optional[bool] = None,
         create_public_threads: Optional[bool] = None,
         send_messages_in_threads: Optional[bool] = None,
         use_application_commands: Optional[bool] = None,
-        create_instant_invite: Optional[bool] = None,
+        send_polls: Optional[bool] = None,
+        send_voice_messages: Optional[bool] = None,
         connect: Optional[bool] = None,
         speak: Optional[bool] = None,
         stream: Optional[bool] = None,
-        mute_members: Optional[bool] = None,
-        move_members: Optional[bool] = None
+        use_voice_activation: Optional[bool] = None,
+        use_soundboard: Optional[bool] = None,
+        request_to_speak: Optional[bool] = None
     ):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
@@ -868,19 +883,18 @@ class UtilityCog(commands.Cog):
                 "attach_files": attach_files,
                 "add_reactions": add_reactions,
                 "use_external_emojis": use_external_emojis,
-                "mention_everyone": mention_everyone,
-                "manage_messages": manage_messages,
-                "manage_channels": manage_channels,
-                "manage_permissions": manage_permissions,
+                "use_external_stickers": use_external_stickers,
                 "create_public_threads": create_public_threads,
                 "send_messages_in_threads": send_messages_in_threads,
                 "use_application_commands": use_application_commands,
-                "create_instant_invite": create_instant_invite,
+                "send_polls": send_polls,
+                "send_voice_messages": send_voice_messages,
                 "connect": connect,
                 "speak": speak,
                 "stream": stream,
-                "mute_members": mute_members,
-                "move_members": move_members,
+                "use_voice_activation": use_voice_activation,
+                "use_soundboard": use_soundboard,
+                "request_to_speak": request_to_speak,
             }.items() if value is not None
         }
         permission_kwargs = {CHANNEL_PERMISSION_OPTIONS[key][1]: value for key, value in chosen.items()}
@@ -890,7 +904,7 @@ class UtilityCog(commands.Cog):
         overwrites = {}
         if roles:
             overwrites[guild.default_role] = discord.PermissionOverwrite(view_channel=False)
-            role_kwargs = {"view_channel": True, **permission_kwargs}  # an explicit view_channel choice wins
+            role_kwargs = {**DEFAULT_ROLE_PERMISSIONS, **permission_kwargs}  # your choices win over the basic defaults
             for role in roles:
                 overwrites[role] = discord.PermissionOverwrite(**role_kwargs)
         elif permission_kwargs:
@@ -902,15 +916,15 @@ class UtilityCog(commands.Cog):
         reason = f"Created by {interaction.user} ({interaction.user.id})"
         try:
             if action.value == "chat":
-                channel = await guild.create_text_channel(clean_name, overwrites=overwrites, reason=reason)
+                channel = await guild.create_text_channel(clean_name, category=category, overwrites=overwrites, reason=reason)
             elif action.value == "announcement":
-                channel = await guild.create_text_channel(clean_name, news=True, overwrites=overwrites, reason=reason)
+                channel = await guild.create_text_channel(clean_name, news=True, category=category, overwrites=overwrites, reason=reason)
             elif action.value == "voice":
-                channel = await guild.create_voice_channel(clean_name, overwrites=overwrites, reason=reason)
+                channel = await guild.create_voice_channel(clean_name, category=category, overwrites=overwrites, reason=reason)
             elif action.value == "stage":
-                channel = await guild.create_stage_channel(clean_name, overwrites=overwrites, reason=reason)
+                channel = await guild.create_stage_channel(clean_name, category=category, overwrites=overwrites, reason=reason)
             else:
-                channel = await guild.create_forum(clean_name, overwrites=overwrites, reason=reason)
+                channel = await guild.create_forum(clean_name, category=category, overwrites=overwrites, reason=reason)
         except discord.Forbidden:
             await fail(
                 "Missing Permissions",
@@ -929,6 +943,7 @@ class UtilityCog(commands.Cog):
         embed.add_field(name="Kind", value=code(action.name), inline=True)
         embed.add_field(name="Type", value=code(channel_type.name), inline=True)
         embed.add_field(name="Channel ID", value=code(channel.id), inline=True)
+        embed.add_field(name="Category", value=code(category.name) if category else "`None`", inline=True)
         embed.add_field(
             name="Allowed Roles",
             value=" ".join(role.mention for role in roles) if roles else "`Everyone`",
