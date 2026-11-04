@@ -545,6 +545,32 @@ def parse_role_ids(text: str):
     return list(dict.fromkeys(ids)), bad
 
 
+# Discord allows at most 25 options in one slash command. name, action, type, allowed_roles and duration use 5,
+# so 20 permissions fit. Format: option name -> (label shown in replies, PermissionOverwrite attribute).
+CHANNEL_PERMISSION_OPTIONS = {
+    "view_channel": ("View Channel", "view_channel"),
+    "send_messages": ("Send Messages", "send_messages"),
+    "read_message_history": ("Read Message History", "read_message_history"),
+    "embed_links": ("Embed Links", "embed_links"),
+    "attach_files": ("Attach Files", "attach_files"),
+    "add_reactions": ("Add Reactions", "add_reactions"),
+    "use_external_emojis": ("Use External Emojis", "use_external_emojis"),
+    "mention_everyone": ("Mention Everyone", "mention_everyone"),
+    "manage_messages": ("Manage Messages", "manage_messages"),
+    "manage_channels": ("Manage Channel", "manage_channels"),
+    "manage_permissions": ("Manage Permissions", "manage_permissions"),
+    "create_public_threads": ("Create Public Threads", "create_public_threads"),
+    "send_messages_in_threads": ("Send Messages In Threads", "send_messages_in_threads"),
+    "use_application_commands": ("Use Application Commands", "use_application_commands"),
+    "create_instant_invite": ("Create Invite", "create_instant_invite"),
+    "connect": ("Connect", "connect"),
+    "speak": ("Speak", "speak"),
+    "stream": ("Stream", "stream"),
+    "mute_members": ("Mute Members", "mute_members"),
+    "move_members": ("Move Members", "move_members"),
+}
+
+
 class TempChannelStore:
     """Remembers when temporary channels must be deleted. Uses MongoDB when MONGO_URI is set,
     so the timers survive restarts and redeploys. Without MONGO_URI it only lives in memory."""
@@ -725,14 +751,14 @@ class UtilityCog(commands.Cog):
     # =============================================================
     channel_group = app_commands.Group(name="channel", description="Create channels.", guild_only=True)
 
-    @channel_group.command(name="create", description="Create a normal or temporary channel.")
+    @channel_group.command(name="create", description="Create a channel. Permission options: true = allow, false = deny.")
     @app_commands.describe(
         name="Channel name.",
         action="What kind of channel to create.",
         channel_type="Normal stays forever. Temporary is deleted automatically.",
-        all_permissions="Give the allowed roles every permission in this channel.",
-        allowed_roles="Roles that can see it (mention them or paste role IDs). Empty = everyone can see it.",
-        duration="Temporary only: 1m, 1h, 1d, 1w, 1mo or 1year."
+        allowed_roles="Roles that get access (mention them or paste IDs). Empty = permissions apply to @everyone.",
+        duration="Temporary only: 1m, 1h, 1d, 1w, 1mo or 1year.",
+        **{key: f"{label}: true = allow, false = deny, empty = default." for key, (label, _) in CHANNEL_PERMISSION_OPTIONS.items()}
     )
     @app_commands.rename(channel_type="type")
     @app_commands.choices(
@@ -754,9 +780,28 @@ class UtilityCog(commands.Cog):
         name: app_commands.Range[str, 1, 100],
         action: app_commands.Choice[str],
         channel_type: app_commands.Choice[str],
-        all_permissions: bool = False,
         allowed_roles: Optional[str] = None,
-        duration: Optional[str] = None
+        duration: Optional[str] = None,
+        view_channel: Optional[bool] = None,
+        send_messages: Optional[bool] = None,
+        read_message_history: Optional[bool] = None,
+        embed_links: Optional[bool] = None,
+        attach_files: Optional[bool] = None,
+        add_reactions: Optional[bool] = None,
+        use_external_emojis: Optional[bool] = None,
+        mention_everyone: Optional[bool] = None,
+        manage_messages: Optional[bool] = None,
+        manage_channels: Optional[bool] = None,
+        manage_permissions: Optional[bool] = None,
+        create_public_threads: Optional[bool] = None,
+        send_messages_in_threads: Optional[bool] = None,
+        use_application_commands: Optional[bool] = None,
+        create_instant_invite: Optional[bool] = None,
+        connect: Optional[bool] = None,
+        speak: Optional[bool] = None,
+        stream: Optional[bool] = None,
+        mute_members: Optional[bool] = None,
+        move_members: Optional[bool] = None
     ):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
@@ -805,7 +850,7 @@ class UtilityCog(commands.Cog):
                 if role is None:
                     missing.append(code(role_id))
                 elif role.is_default():
-                    await fail("Invalid Role", "`@everyone` cannot be an allowed role. Leave `allowed_roles` empty to let everyone see the channel.")
+                    await fail("Invalid Role", "`@everyone` cannot be an allowed role. Leave `allowed_roles` empty to set permissions for everyone.")
                     return
                 else:
                     roles.append(role)
@@ -813,23 +858,44 @@ class UtilityCog(commands.Cog):
                 await fail("Roles Not Found", "These roles are not in this server: " + ", ".join(missing))
                 return
 
-        if all_permissions and not roles:
-            await fail("Roles Needed", "`all_permissions` gives permissions to the allowed roles. Please set `allowed_roles` too.")
-            return
+        # The permissions the user chose: true = allow, false = deny, empty = leave as default
+        chosen = {
+            key: value for key, value in {
+                "view_channel": view_channel,
+                "send_messages": send_messages,
+                "read_message_history": read_message_history,
+                "embed_links": embed_links,
+                "attach_files": attach_files,
+                "add_reactions": add_reactions,
+                "use_external_emojis": use_external_emojis,
+                "mention_everyone": mention_everyone,
+                "manage_messages": manage_messages,
+                "manage_channels": manage_channels,
+                "manage_permissions": manage_permissions,
+                "create_public_threads": create_public_threads,
+                "send_messages_in_threads": send_messages_in_threads,
+                "use_application_commands": use_application_commands,
+                "create_instant_invite": create_instant_invite,
+                "connect": connect,
+                "speak": speak,
+                "stream": stream,
+                "mute_members": mute_members,
+                "move_members": move_members,
+            }.items() if value is not None
+        }
+        permission_kwargs = {CHANNEL_PERMISSION_OPTIONS[key][1]: value for key, value in chosen.items()}
 
-        # Private channel: hide it from everyone, show it to the allowed roles
+        # With allowed roles the channel is private: hidden from everyone, and the chosen permissions go to those roles.
+        # Without allowed roles the chosen permissions apply to @everyone.
         overwrites = {}
         if roles:
             overwrites[guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+            role_kwargs = {"view_channel": True, **permission_kwargs}  # an explicit view_channel choice wins
             for role in roles:
-                if all_permissions:
-                    overwrites[role] = discord.PermissionOverwrite.from_pair(
-                        discord.Permissions.all_channel(), discord.Permissions.none()
-                    )
-                else:
-                    overwrites[role] = discord.PermissionOverwrite(
-                        view_channel=True, send_messages=True, read_message_history=True, connect=True, speak=True
-                    )
+                overwrites[role] = discord.PermissionOverwrite(**role_kwargs)
+        elif permission_kwargs:
+            overwrites[guild.default_role] = discord.PermissionOverwrite(**permission_kwargs)
+        if overwrites:
             # Keep the bot able to see and delete the channel
             overwrites[guild.me] = discord.PermissionOverwrite(view_channel=True, manage_channels=True, send_messages=True, connect=True)
 
@@ -863,12 +929,18 @@ class UtilityCog(commands.Cog):
         embed.add_field(name="Kind", value=code(action.name), inline=True)
         embed.add_field(name="Type", value=code(channel_type.name), inline=True)
         embed.add_field(name="Channel ID", value=code(channel.id), inline=True)
-        embed.add_field(name="All Permissions", value="`Yes`" if all_permissions else "`No`", inline=True)
         embed.add_field(
             name="Allowed Roles",
             value=" ".join(role.mention for role in roles) if roles else "`Everyone`",
             inline=True
         )
+        if chosen:
+            allowed_names = [CHANNEL_PERMISSION_OPTIONS[key][0] for key, value in chosen.items() if value]
+            denied_names = [CHANNEL_PERMISSION_OPTIONS[key][0] for key, value in chosen.items() if not value]
+            target = " ".join(role.mention for role in roles) if roles else "`@everyone`"
+            embed.add_field(name="Permissions Apply To", value=target, inline=False)
+            embed.add_field(name="Allowed", value=" ".join(code(n) for n in allowed_names) or "`None`", inline=False)
+            embed.add_field(name="Denied", value=" ".join(code(n) for n in denied_names) or "`None`", inline=False)
 
         if temporary:
             delete_ts = datetime.now(timezone.utc).timestamp() + delete_after.total_seconds()
