@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import random
 from urllib.parse import unquote
 from dataclasses import dataclass, replace
@@ -10,6 +11,7 @@ import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from pymongo import MongoClient
 
 # -------------------------------------------------------------
 # CONSTANTS
@@ -25,6 +27,10 @@ COLOR_PURPLE = 0x8B5CF6
 COLOR_GREEN = 0x2ECC71
 COLOR_RED = 0xF43F5E
 COLOR_GREY = 0x6B7280
+
+# Template Engine design channels (same variable names as the main bot). Used for the daily report.
+PREMIUM_DESIGN_CHANNEL_ID = int(os.getenv("PREMIUM_DESIGN_CHANNEL_ID", "1563544108696477802"))
+NON_PREMIUM_DESIGN_CHANNEL_ID = int(os.getenv("NON_PREMIUM_DESIGN_CHANNEL_ID", "1563524101522464900"))
 
 # Default border color of the advertisement embed (dark grey)
 DEFAULT_AD_COLOR = 0x2B2D31
@@ -488,17 +494,125 @@ async def fetch_revenue_totals(session: aiohttp.ClientSession, source: dict, tim
 
 
 # -------------------------------------------------------------
+# DAILY REPORT AND /channel HELPERS
+# -------------------------------------------------------------
+def format_member_change(current: Optional[int], previous: Optional[int]) -> str:
+    """Text for the 'New Group Members' field."""
+    if current is None:
+        return "`N/A`"
+    if previous is None:
+        return f"`N/A` (first report)\nTotal: `{current:,}`"
+    return f"`{current - previous:+,}`\nTotal: `{current:,}`"
+
+
+def parse_channel_duration(text: Optional[str]) -> Optional[timedelta]:
+    """Parses 1m, 1h, 1d, 1w, 1mo, 1year (also longer words). Returns None if invalid."""
+    match = re.fullmatch(
+        r"(\d+)\s*(years?|yrs?|y|months?|mos?|mo|weeks?|w|days?|d|hours?|hrs?|h|minutes?|mins?|m)",
+        (text or "").strip().lower()
+    )
+    if not match:
+        return None
+    amount, unit = int(match.group(1)), match.group(2)
+    if amount < 1:
+        return None
+    if unit.startswith("y"):
+        delta = timedelta(days=365 * amount)
+    elif unit.startswith("mo"):
+        delta = timedelta(days=30 * amount)
+    elif unit.startswith("w"):
+        delta = timedelta(weeks=amount)
+    elif unit.startswith("d"):
+        delta = timedelta(days=amount)
+    elif unit.startswith("h"):
+        delta = timedelta(hours=amount)
+    else:
+        delta = timedelta(minutes=amount)
+    return delta if delta <= timedelta(days=3650) else None
+
+
+def parse_role_ids(text: str):
+    """Reads role mentions (<@&id>) or raw role IDs. Returns (ids, unreadable_parts)."""
+    ids, bad = [], []
+    for token in re.split(r"[\s,]+", (text or "").strip()):
+        if not token:
+            continue
+        found = re.fullmatch(r"<@&(\d+)>|(\d{15,25})", token)
+        if found:
+            ids.append(int(found.group(1) or found.group(2)))
+        else:
+            bad.append(token)
+    return list(dict.fromkeys(ids)), bad
+
+
+class TempChannelStore:
+    """Remembers when temporary channels must be deleted. Uses MongoDB when MONGO_URI is set,
+    so the timers survive restarts and redeploys. Without MONGO_URI it only lives in memory."""
+
+    def __init__(self):
+        self.mem = {}
+        self.col = None
+        uri = os.getenv("MONGO_URI")
+        if uri:
+            try:
+                client = MongoClient(uri, serverSelectionTimeoutMS=8000)
+                try:
+                    db = client.get_default_database()
+                except Exception:
+                    db = client.get_database("utility_bot")
+                self.col = db["temporary_channels"]
+                print("[Temp Channels] Using MongoDB storage.")
+            except Exception as e:
+                print(f"[Temp Channels] MongoDB error, using memory storage: {e}")
+        else:
+            print("[Temp Channels] MONGO_URI not set. Timers are lost when the bot restarts.")
+
+    @property
+    def persistent(self) -> bool:
+        return self.col is not None
+
+    def _add(self, doc):
+        if self.col is not None:
+            self.col.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+        else:
+            self.mem[doc["_id"]] = doc
+
+    def _remove(self, _id):
+        if self.col is not None:
+            self.col.delete_one({"_id": _id})
+        else:
+            self.mem.pop(_id, None)
+
+    def _due(self, now):
+        if self.col is not None:
+            return list(self.col.find({"delete_at": {"$lte": now}}))
+        return [d for d in self.mem.values() if d["delete_at"] <= now]
+
+    async def add(self, doc):
+        await asyncio.to_thread(self._add, doc)
+
+    async def remove(self, _id):
+        await asyncio.to_thread(self._remove, _id)
+
+    async def due(self, now):
+        return await asyncio.to_thread(self._due, now)
+
+
+# -------------------------------------------------------------
 # COG
 # -------------------------------------------------------------
 class UtilityCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.temp_store = TempChannelStore()
 
     async def cog_load(self):
         self.daily_revenue_log.start()
+        self.temp_channel_checker.start()
 
     async def cog_unload(self):
         self.daily_revenue_log.cancel()
+        self.temp_channel_checker.cancel()
 
     # OWNER LOCK: every slash command in this cog is hard-coded to BOT_OWNER_ID.
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -607,58 +721,348 @@ class UtilityCog(commands.Cog):
         )
 
     # =============================================================
-    # DAILY REVENUE LOG  (every day at 12:00 AM GMT+9)
+    # /channel create  (normal or temporary channels)
     # =============================================================
-    @tasks.loop(time=DAILY_LOG_TIME)
-    async def daily_revenue_log(self):
-        channel = self.bot.get_channel(DAILY_LOG_CHANNEL_ID)
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(DAILY_LOG_CHANNEL_ID)
-            except Exception as e:
-                print(f"[Daily Revenue Log] Could not find channel {DAILY_LOG_CHANNEL_ID}: {e}")
+    channel_group = app_commands.Group(name="channel", description="Create channels.", guild_only=True)
+
+    @channel_group.command(name="create", description="Create a normal or temporary channel.")
+    @app_commands.describe(
+        name="Channel name.",
+        action="What kind of channel to create.",
+        channel_type="Normal stays forever. Temporary is deleted automatically.",
+        all_permissions="Give the allowed roles every permission in this channel.",
+        allowed_roles="Roles that can see it (mention them or paste role IDs). Empty = everyone can see it.",
+        duration="Temporary only: 1m, 1h, 1d, 1w, 1mo or 1year."
+    )
+    @app_commands.rename(channel_type="type")
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Chat", value="chat"),
+            app_commands.Choice(name="Voice", value="voice"),
+            app_commands.Choice(name="Announcement", value="announcement"),
+            app_commands.Choice(name="Stage", value="stage"),
+            app_commands.Choice(name="Forum", value="forum"),
+        ],
+        channel_type=[
+            app_commands.Choice(name="Normal", value="normal"),
+            app_commands.Choice(name="Temporary", value="temporary"),
+        ]
+    )
+    async def channel_create_cmd(
+        self,
+        interaction: discord.Interaction,
+        name: app_commands.Range[str, 1, 100],
+        action: app_commands.Choice[str],
+        channel_type: app_commands.Choice[str],
+        all_permissions: bool = False,
+        allowed_roles: Optional[str] = None,
+        duration: Optional[str] = None
+    ):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+
+        async def fail(title: str, text: str):
+            await interaction.followup.send(embed=error_embed(title, text), ephemeral=True)
+
+        if not guild.me.guild_permissions.manage_channels:
+            await fail("Missing Permissions", "I need the **Manage Channels** permission in this server.")
+            return
+
+        clean_name = str(name).strip()
+        if not clean_name:
+            await fail("Invalid Name", "The channel name cannot be empty.")
+            return
+
+        # Temporary channels need a duration
+        temporary = channel_type.value == "temporary"
+        delete_after = None
+        if temporary:
+            if not duration:
+                await fail("Duration Missing", "Temporary channels need a `duration`, for example `1h`, `1d`, `1w`, `1mo` or `1year`.")
+                return
+            delete_after = parse_channel_duration(duration)
+            if delete_after is None:
+                await fail("Invalid Duration", "Use a number with one unit: `1m`, `1h`, `1d`, `1w`, `1mo` or `1year`. The maximum is 10 years.")
                 return
 
+        # Allowed roles (mentions or IDs)
+        roles = []
+        if allowed_roles and allowed_roles.strip():
+            role_ids, unreadable = parse_role_ids(allowed_roles)
+            if unreadable or not role_ids:
+                await fail(
+                    "Invalid Roles",
+                    "I could not read: " + (", ".join(code(x) for x in unreadable) or "`nothing`")
+                    + "\nMention the roles (for example `@Staff @Members`) or paste role IDs."
+                )
+                return
+            if len(role_ids) > 20:
+                await fail("Too Many Roles", "Please use 20 roles or fewer.")
+                return
+            missing = []
+            for role_id in role_ids:
+                role = guild.get_role(role_id)
+                if role is None:
+                    missing.append(code(role_id))
+                elif role.is_default():
+                    await fail("Invalid Role", "`@everyone` cannot be an allowed role. Leave `allowed_roles` empty to let everyone see the channel.")
+                    return
+                else:
+                    roles.append(role)
+            if missing:
+                await fail("Roles Not Found", "These roles are not in this server: " + ", ".join(missing))
+                return
+
+        if all_permissions and not roles:
+            await fail("Roles Needed", "`all_permissions` gives permissions to the allowed roles. Please set `allowed_roles` too.")
+            return
+
+        # Private channel: hide it from everyone, show it to the allowed roles
+        overwrites = {}
+        if roles:
+            overwrites[guild.default_role] = discord.PermissionOverwrite(view_channel=False)
+            for role in roles:
+                if all_permissions:
+                    overwrites[role] = discord.PermissionOverwrite.from_pair(
+                        discord.Permissions.all_channel(), discord.Permissions.none()
+                    )
+                else:
+                    overwrites[role] = discord.PermissionOverwrite(
+                        view_channel=True, send_messages=True, read_message_history=True, connect=True, speak=True
+                    )
+            # Keep the bot able to see and delete the channel
+            overwrites[guild.me] = discord.PermissionOverwrite(view_channel=True, manage_channels=True, send_messages=True, connect=True)
+
+        reason = f"Created by {interaction.user} ({interaction.user.id})"
+        try:
+            if action.value == "chat":
+                channel = await guild.create_text_channel(clean_name, overwrites=overwrites, reason=reason)
+            elif action.value == "announcement":
+                channel = await guild.create_text_channel(clean_name, news=True, overwrites=overwrites, reason=reason)
+            elif action.value == "voice":
+                channel = await guild.create_voice_channel(clean_name, overwrites=overwrites, reason=reason)
+            elif action.value == "stage":
+                channel = await guild.create_stage_channel(clean_name, overwrites=overwrites, reason=reason)
+            else:
+                channel = await guild.create_forum(clean_name, overwrites=overwrites, reason=reason)
+        except discord.Forbidden:
+            await fail(
+                "Missing Permissions",
+                "I could not create the channel. I need **Manage Channels**, and I can only give permissions that I have myself."
+            )
+            return
+        except discord.HTTPException as e:
+            hint = ""
+            if action.value in ("announcement", "stage", "forum"):
+                hint = "\nThis channel type needs **Community** to be enabled in the server settings."
+            await fail("Could Not Create Channel", f"Discord returned: `{str(e)[:400]}`{hint}")
+            return
+
+        embed = discord.Embed(title="Channel Created", description=f"{channel.mention} was created.", color=COLOR_GREEN)
+        embed.add_field(name="Name", value=code(channel.name), inline=True)
+        embed.add_field(name="Kind", value=code(action.name), inline=True)
+        embed.add_field(name="Type", value=code(channel_type.name), inline=True)
+        embed.add_field(name="Channel ID", value=code(channel.id), inline=True)
+        embed.add_field(name="All Permissions", value="`Yes`" if all_permissions else "`No`", inline=True)
+        embed.add_field(
+            name="Allowed Roles",
+            value=" ".join(role.mention for role in roles) if roles else "`Everyone`",
+            inline=True
+        )
+
+        if temporary:
+            delete_ts = datetime.now(timezone.utc).timestamp() + delete_after.total_seconds()
+            try:
+                await self.temp_store.add({
+                    "_id": channel.id, "guild_id": guild.id, "name": channel.name, "delete_at": delete_ts
+                })
+                embed.add_field(name="Deletes", value=f"<t:{int(delete_ts)}:R> (<t:{int(delete_ts)}:F>)", inline=False)
+                if not self.temp_store.persistent:
+                    embed.add_field(
+                        name="Warning",
+                        value="`MONGO_URI` is not set, so this timer is lost if the bot restarts. Add `MONGO_URI` on Render.",
+                        inline=False
+                    )
+            except Exception as e:
+                print(f"[Temp Channel] Could not save timer for {channel.id}: {e}")
+                embed.add_field(
+                    name="Warning",
+                    value="The channel was created, but I could not save its timer. It will not be deleted automatically.",
+                    inline=False
+                )
+        elif duration:
+            embed.add_field(name="Note", value="`duration` is only used for temporary channels, so it was ignored.", inline=False)
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @tasks.loop(seconds=30)
+    async def temp_channel_checker(self):
+        try:
+            now = datetime.now(timezone.utc).timestamp()
+            for doc in await self.temp_store.due(now):
+                channel = self.bot.get_channel(doc["_id"])
+                if channel is None:
+                    try:
+                        channel = await self.bot.fetch_channel(doc["_id"])
+                    except discord.NotFound:
+                        channel = None  # already deleted by someone
+                    except discord.HTTPException as e:
+                        print(f"[Temp Channel] Cannot reach channel {doc['_id']}: {e}")
+                        channel = None
+
+                if channel is not None:
+                    try:
+                        await channel.delete(reason="Temporary channel expired")
+                        print(f"[Temp Channel] Deleted expired channel {doc['_id']}")
+                    except discord.HTTPException as e:
+                        print(f"[Temp Channel] Could not delete channel {doc['_id']}: {e}")
+
+                # Remove the record in every case so it never loops forever
+                await self.temp_store.remove(doc["_id"])
+        except Exception as e:
+            print(f"[Temp Channel Checker Error] {e}")
+
+    @temp_channel_checker.before_loop
+    async def before_temp_channel_checker(self):
+        await self.bot.wait_until_ready()
+
+    # =============================================================
+    # DAILY REPORT  (every day at 12:00 AM GMT+9)
+    # Earnings, new group members, total designs, total built servers, cookie check
+    # =============================================================
+    async def get_channel_any(self, channel_id: int):
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            channel = await self.bot.fetch_channel(channel_id)
+        return channel
+
+    async def count_json_posts(self, channel_id: int) -> Optional[int]:
+        """Counts the design posts (messages with a .json file) in a channel. None if the channel cannot be read."""
+        try:
+            channel = await self.get_channel_any(channel_id)
+            count = 0
+            async for message in channel.history(limit=None):
+                if any(a.filename.lower().endswith(".json") for a in message.attachments):
+                    count += 1
+            return count
+        except Exception as e:
+            print(f"[Daily Report] Could not count designs in {channel_id}: {e}")
+            return None
+
+    async def previous_member_count(self, channel) -> Optional[int]:
+        """Reads yesterday's group member count from the last daily report in the channel."""
+        try:
+            async for message in channel.history(limit=100):
+                if message.author.id != self.bot.user.id:
+                    continue
+                for embed in message.embeds:
+                    if embed.title == "Daily Report" and embed.footer and embed.footer.text:
+                        found = re.search(r"Group members: ([\d,]+)", embed.footer.text)
+                        if found:
+                            return int(found.group(1).replace(",", ""))
+        except Exception as e:
+            print(f"[Daily Report] Could not read the previous report: {e}")
+        return None
+
+    async def send_daily_report(self, channel):
         headers = get_roblox_cookie_header()
-        if not headers:
-            await channel.send(embed=error_embed(
-                "Daily Revenue Log Failed", "The `ROBLOX_COOKIE` environment variable is not set."
-            ))
+        cookie_ok = False
+        cookie_text = "`Missing` - `ROBLOX_COOKIE` is not set"
+        earnings_text = "`N/A`"
+        current_members = None
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            # 1. Cookie check
+            if headers:
+                try:
+                    async with session.get("https://users.roblox.com/v1/users/authenticated") as resp:
+                        if resp.status == 200:
+                            me = await resp.json()
+                            cookie_ok = True
+                            cookie_text = f"`Valid` - `{me.get('name', 'Unknown')}`"
+                        else:
+                            cookie_text = f"`Invalid or expired` (status `{resp.status}`)"
+                except Exception as e:
+                    cookie_text = f"`Could not check` - `{str(e)[:100]}`"
+
+            # 2. Earnings of the day
+            if cookie_ok:
+                try:
+                    source = await resolve_revenue_source(session)
+                    totals = await fetch_revenue_totals(session, source, "Day")
+                    earnings_text = f"`{totals['sales']:,}` R$\nPending: `{totals['pending']:,}` R$"
+                except RevenueError as e:
+                    earnings_text = f"`N/A` - {e.message[:150]}"
+                except Exception as e:
+                    print(f"[Daily Report] Earnings error: {e}")
+                    earnings_text = f"`N/A` - `{str(e)[:100]}`"
+            else:
+                earnings_text = "`N/A` - the cookie is not valid"
+
+            # 3. Group members
+            group_id = os.getenv("ROBLOX_GROUP_ID", "").strip()
+            if group_id:
+                try:
+                    async with session.get(f"https://groups.roblox.com/v1/groups/{group_id}") as resp:
+                        if resp.status == 200:
+                            current_members = int((await resp.json()).get("memberCount", 0))
+                except Exception as e:
+                    print(f"[Daily Report] Group error: {e}")
+
+        previous_members = await self.previous_member_count(channel)
+        members_text = format_member_change(current_members, previous_members)
+
+        # 4. Designs and built servers (design posts in the two Template Engine design channels)
+        premium_count, normal_count = await asyncio.gather(
+            self.count_json_posts(PREMIUM_DESIGN_CHANNEL_ID),
+            self.count_json_posts(NON_PREMIUM_DESIGN_CHANNEL_ID)
+        )
+        if premium_count is None or normal_count is None:
+            designs_text = "`N/A` - cannot read the design channels"
+        else:
+            designs_text = f"`{premium_count + normal_count:,}`"
+        built_text = f"`{premium_count:,}`\n*premium auto-builds*" if premium_count is not None else "`N/A`"
+
+        now = datetime.now(timezone.utc)
+        embed = discord.Embed(
+            title="Daily Report",
+            description=f"Report for <t:{int(now.timestamp())}:D>",
+            color=COLOR_GREEN if cookie_ok else COLOR_RED,
+            timestamp=now
+        )
+        embed.add_field(name="Earnings Today", value=earnings_text, inline=True)
+        embed.add_field(name="New Group Members", value=members_text, inline=True)
+        embed.add_field(name="Cookie Check", value=cookie_text, inline=True)
+        embed.add_field(name="Total Designs", value=designs_text, inline=True)
+        embed.add_field(name="Total Built Servers", value=built_text, inline=True)
+        embed.set_footer(text=f"Group members: {current_members:,}" if current_members is not None else "Daily report")
+
+        await channel.send(
+            content=None if cookie_ok else f"<@{BOT_OWNER_ID}> Your Roblox cookie needs attention.",
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=[discord.Object(id=BOT_OWNER_ID)])
+        )
+
+    @tasks.loop(time=DAILY_LOG_TIME)
+    async def daily_revenue_log(self):
+        try:
+            channel = await self.get_channel_any(DAILY_LOG_CHANNEL_ID)
+        except Exception as e:
+            print(f"[Daily Report] Could not find channel {DAILY_LOG_CHANNEL_ID}: {e}")
             return
 
         try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                source = await resolve_revenue_source(session)
-                day = await fetch_revenue_totals(session, source, "Day")
-                week = await fetch_revenue_totals(session, source, "Week")
-                month = await fetch_revenue_totals(session, source, "Month")
-
-            now_ts = int(datetime.now(timezone.utc).timestamp())
-            embed = discord.Embed(
-                title="Daily Revenue Log",
-                description=f"Report for <t:{now_ts}:D>\nSource: {source['label']}",
-                color=COLOR_GREEN
-            )
-            embed.add_field(name="Past Day", value=f"`{day['sales']:,}` R$", inline=True)
-            embed.add_field(name="Past 7 Days", value=f"`{week['sales']:,}` R$", inline=True)
-            embed.add_field(name="Past 30 Days", value=f"`{month['sales']:,}` R$", inline=True)
-            embed.add_field(name="Pending", value=f"`{day['pending']:,}` R$", inline=True)
-            embed.set_footer(text="Sales from the Roblox Economy API")
-            await channel.send(embed=embed)
-
-        except RevenueError as e:
-            await channel.send(embed=error_embed("Daily Revenue Log Failed", e.message))
+            await self.send_daily_report(channel)
         except Exception as e:
-            print(f"[Daily Revenue Log Error] {e}")
+            print(f"[Daily Report Error] {e}")
             try:
-                await channel.send(embed=error_embed("Daily Revenue Log Failed", f"Something went wrong: `{str(e)}`"))
+                await channel.send(embed=error_embed("Daily Report Failed", f"Something went wrong: `{str(e)[:500]}`"))
             except Exception:
                 pass
 
     @daily_revenue_log.before_loop
     async def before_daily_revenue_log(self):
         await self.bot.wait_until_ready()
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(UtilityCog(bot))
