@@ -1,5 +1,7 @@
 import os
 import re
+import random
+from urllib.parse import unquote
 from dataclasses import dataclass, replace
 from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Optional
@@ -68,10 +70,17 @@ def parse_hex_color(text: Optional[str]) -> int:
 
 
 # -------------------------------------------------------------
-# ADVERTISEMENT DATA, EMBEDS AND VIEWS
+# ADVERTISEMENT DATA, TEXT AND VIEWS (Components V2 layout)
 # -------------------------------------------------------------
+# Discord allows 4000 characters of text in total inside one Components V2 message.
+MAX_TEXT_LENGTH = 4000
+MAX_DESCRIPTION_LENGTH = 1900
+NO_MENTIONS = discord.AllowedMentions.none()
+
+
 @dataclass
 class AdData:
+    ad_id: int
     type_title: str
     embed_title: str
     description: str
@@ -83,63 +92,204 @@ class AdData:
     image_link: str = ""
 
 
-def build_ad_embed(data: AdData) -> discord.Embed:
-    """The advertisement exactly as it will look when published."""
-    shown_link = re.sub(r"^https?://", "", data.server_link).rstrip("/")
-    shown_link = shown_link.replace("[", "").replace("]", "")
-    if len(shown_link) > 60:
-        shown_link = shown_link[:57] + "..."
-    markdown_link = data.server_link.replace("(", "%28").replace(")", "%29")
-
-    lines = [f"### {data.type_title}"]
-    if data.mention:
-        lines.append(data.mention)
-    lines.append("")
-    lines.append(f"## {data.embed_title}")
-    lines.append(data.description)
-    lines.append("")
-    lines.append(f"➡️ **Join now:** [{shown_link}]({markdown_link})")
-
-    embed = discord.Embed(description="\n".join(lines)[:4096], color=data.color)
-    if data.image_link:
-        embed.set_image(url=data.image_link)
-    return embed
+def short_text(text: str, limit: int) -> str:
+    text = str(text)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
-def build_status_embed(data: AdData) -> discord.Embed:
-    """Small info card shown above the ad in the private preview."""
-    embed = discord.Embed(
-        title="Advertisement Preview",
-        description="Only you can see this. Nothing has been posted and nobody has been pinged yet.",
-        color=COLOR_PURPLE
+def image_file_name(url: str) -> str:
+    """The file name shown for the image link, e.g. banner.png."""
+    path = unquote(re.split(r"[?#]", url, maxsplit=1)[0])
+    path = re.sub(r"^https?://[^/]+", "", path).rstrip("/")
+    name = path.rsplit("/", 1)[-1].replace("[", "").replace("]", "").strip()
+    return short_text(name, 40) if name else "image"
+
+
+def ad_header_text(data: AdData) -> str:
+    """Big header, then a small line with the mention and the ad ID."""
+    info = f"{data.mention} — ID: {data.ad_id}" if data.mention else f"ID: {data.ad_id}"
+    return f"# {data.type_title}\n-# {info}"
+
+
+def ad_body_text(data: AdData) -> str:
+    """Headline, description and the call-to-action line with the server link."""
+    return f"## {data.embed_title}\n{data.description}\n🚀 Join here: {data.server_link}"
+
+
+def ad_image_text(data: AdData) -> str:
+    """The image link shown as an attachment-style line. Empty if there is no image."""
+    if not data.image_link:
+        return ""
+    link = data.image_link.replace("(", "%28").replace(")", "%29")
+    return f"📎 [{image_file_name(data.image_link)}]({link})"
+
+
+def control_text(data: AdData, mode: str) -> str:
+    """Text of the private control card (preview or edit menu)."""
+    if mode == "edit":
+        return "## Edit Advertisement\nChoose what you want to change. Nothing is posted until you press Publish."
+
+    ping = code(data.mention) if data.mention else "`None`"
+    color = code(f"#{data.color:06X}")
+    return "\n".join([
+        "## Advertisement Preview",
+        "Only you can see this. Nothing has been posted and nobody has been pinged yet.",
+        "",
+        f"**Ping On Publish:** {ping}",
+        f"**Embed Color:** {color}",
+        f"**Button Name:** {code(data.button_name)}",
+        f"**Button Link:** {code(short_text(data.button_link, 80))}",
+    ])
+
+
+def total_text_length(data: AdData) -> int:
+    """Text length of the biggest message we send: the preview (ad card + control card)."""
+    return (
+        len(ad_header_text(data)) + len(ad_body_text(data)) + len(ad_image_text(data))
+        + len(control_text(data, "preview"))
     )
-    embed.add_field(name="Ping On Publish", value=code(data.mention) if data.mention else "`None`", inline=True)
-    embed.add_field(name="Embed Color", value=code(f"#{data.color:06X}"), inline=True)
-    embed.add_field(name="Button Name", value=code(data.button_name), inline=True)
-    embed.add_field(name="Button Link", value=code(data.button_link), inline=False)
-    embed.add_field(name="Server Link", value=code(data.server_link), inline=False)
-    embed.add_field(name="Image", value=code(data.image_link) if data.image_link else "`None`", inline=False)
-    return embed
 
 
-def preview_embeds(data: AdData) -> list:
-    return [build_status_embed(data), build_ad_embed(data)]
-
-
-def build_link_button(data: AdData, row: Optional[int] = None) -> discord.ui.Button:
-    return discord.ui.Button(label=data.button_name, url=data.button_link, style=discord.ButtonStyle.link, row=row)
-
-
-async def owner_only_interaction(interaction: discord.Interaction) -> bool:
-    if interaction.user.id == BOT_OWNER_ID:
-        return True
-    try:
-        await interaction.response.send_message(
-            embed=error_embed("Permission Denied", "Only the bot owner can use this."), ephemeral=True
+def text_too_long_error(data: AdData) -> Optional[discord.Embed]:
+    extra = total_text_length(data) - MAX_TEXT_LENGTH
+    if extra > 0:
+        return error_embed(
+            "Text Too Long",
+            f"Discord allows {MAX_TEXT_LENGTH} characters of text in one advertisement. Please shorten it by `{extra}` characters."
         )
-    except Exception:
-        pass
-    return False
+    return None
+
+
+def build_ad_container(data: AdData) -> discord.ui.Container:
+    """The advertisement card exactly as it will look when published."""
+    children = [
+        discord.ui.TextDisplay(ad_header_text(data)),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(ad_body_text(data)),
+    ]
+    image_text = ad_image_text(data)
+    if image_text:
+        children.append(discord.ui.TextDisplay(image_text))
+    children.append(discord.ui.Separator())
+    children.append(discord.ui.ActionRow(
+        discord.ui.Button(label=data.button_name, url=data.button_link, style=discord.ButtonStyle.link)
+    ))
+    return discord.ui.Container(*children, accent_colour=data.color)
+
+
+def notice_view(text: str, color: int) -> discord.ui.LayoutView:
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.Container(discord.ui.TextDisplay(text), accent_colour=color))
+    return view
+
+
+class AdLayoutView(discord.ui.LayoutView):
+    """The private (ephemeral) message: the ad on top, the control card with buttons below it."""
+
+    def __init__(self, data: AdData, mode: str = "preview"):
+        super().__init__(timeout=None)
+        self.data = data
+        self.add_item(build_ad_container(data))
+        actions = AdPreviewActions(data) if mode == "preview" else AdEditActions(data)
+        self.add_item(discord.ui.Container(
+            discord.ui.TextDisplay(control_text(data, mode)),
+            discord.ui.Separator(),
+            actions,
+            accent_colour=COLOR_PURPLE
+        ))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == BOT_OWNER_ID:
+            return True
+        try:
+            await interaction.response.send_message(
+                embed=error_embed("Permission Denied", "Only the bot owner can use this."), ephemeral=True
+            )
+        except Exception:
+            pass
+        return False
+
+
+async def publish_ad(interaction: discord.Interaction, data: AdData):
+    """Posts the ad publicly (with the ping), then replaces the preview with a 'published' card."""
+    await interaction.response.defer()
+
+    public_view = discord.ui.LayoutView(timeout=None)
+    public_view.add_item(build_ad_container(data))
+    mentions = discord.AllowedMentions(everyone=True, roles=True, users=True)
+
+    sent = None
+    channel = interaction.channel
+    if channel is not None:
+        try:
+            sent = await channel.send(view=public_view, allowed_mentions=mentions)
+        except discord.HTTPException:
+            sent = None
+
+    if sent is None:
+        # The bot cannot post in this channel (for example a user-install). Post as a public reply instead.
+        try:
+            sent = await interaction.followup.send(
+                view=public_view, allowed_mentions=mentions, ephemeral=False, wait=True
+            )
+        except discord.HTTPException as e:
+            await interaction.followup.send(
+                embed=error_embed("Could Not Publish", f"Discord returned: `{str(e)[:500]}`\nThe preview is still active."),
+                ephemeral=True
+            )
+            return
+
+    where = f"<#{interaction.channel_id}>" if interaction.guild_id else "this chat"
+    done = discord.ui.LayoutView(timeout=None)
+    done.add_item(discord.ui.Container(
+        discord.ui.TextDisplay(f"## Advertisement Published\nPosted in {where}.\n[Jump to message]({sent.jump_url})"),
+        accent_colour=COLOR_GREEN
+    ))
+    done.add_item(build_ad_container(data))
+    await interaction.edit_original_response(view=done, allowed_mentions=NO_MENTIONS)
+
+
+class AdPreviewActions(discord.ui.ActionRow):
+    """Publish / Edit / Cancel."""
+
+    def __init__(self, data: AdData):
+        super().__init__()
+        self.data = data
+
+    @discord.ui.button(label="Publish", style=discord.ButtonStyle.success)
+    async def publish_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await publish_ad(interaction, self.data)
+
+    @discord.ui.button(label="Edit", style=discord.ButtonStyle.primary)
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=AdLayoutView(self.data, "edit"), allowed_mentions=NO_MENTIONS)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            view=notice_view("## Advertisement Cancelled\nNothing was posted and nobody was pinged.", COLOR_GREY),
+            allowed_mentions=NO_MENTIONS
+        )
+
+
+class AdEditActions(discord.ui.ActionRow):
+    """Discord allows only 5 inputs per window, so editing is split into two windows."""
+
+    def __init__(self, data: AdData):
+        super().__init__()
+        self.data = data
+
+    @discord.ui.button(label="Edit Text & Server Link", style=discord.ButtonStyle.primary)
+    async def text_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AdTextModal(self.data))
+
+    @discord.ui.button(label="Edit Button, Mention, Color & Image", style=discord.ButtonStyle.primary)
+    async def style_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(AdStyleModal(self.data))
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(view=AdLayoutView(self.data, "preview"), allowed_mentions=NO_MENTIONS)
 
 
 class AdModal(discord.ui.Modal):
@@ -167,7 +317,7 @@ class AdTextModal(AdModal, title="Edit Text and Server Link"):
         )
         self.description_input = discord.ui.TextInput(
             label="Description", style=discord.TextStyle.paragraph, default=data.description,
-            max_length=3000, required=True
+            max_length=MAX_DESCRIPTION_LENGTH, required=True
         )
         self.server_link_input = discord.ui.TextInput(
             label="Server link", default=data.server_link, max_length=512, required=True
@@ -175,7 +325,8 @@ class AdTextModal(AdModal, title="Edit Text and Server Link"):
         self.button_name_input = discord.ui.TextInput(
             label="Button name", default=data.button_name, max_length=80, required=True
         )
-        for item in (self.type_title_input, self.embed_title_input, self.description_input, self.server_link_input, self.button_name_input):
+        for item in (self.type_title_input, self.embed_title_input, self.description_input,
+                     self.server_link_input, self.button_name_input):
             self.add_item(item)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -201,7 +352,12 @@ class AdTextModal(AdModal, title="Edit Text and Server Link"):
             return
 
         new_data = replace(self.data, server_link=server_link, **values)
-        await interaction.response.edit_message(embeds=preview_embeds(new_data), view=AdPreviewView(new_data))
+        too_long = text_too_long_error(new_data)
+        if too_long:
+            await interaction.response.send_message(embed=too_long, ephemeral=True)
+            return
+
+        await interaction.response.edit_message(view=AdLayoutView(new_data), allowed_mentions=NO_MENTIONS)
 
 
 class AdStyleModal(AdModal, title="Edit Button, Mention, Color, Image"):
@@ -251,114 +407,12 @@ class AdStyleModal(AdModal, title="Edit Button, Mention, Color, Image"):
             color=parse_hex_color(self.hex_color_input.value),
             image_link=image_link
         )
-        await interaction.response.edit_message(embeds=preview_embeds(new_data), view=AdPreviewView(new_data))
+        too_long = text_too_long_error(new_data)
+        if too_long:
+            await interaction.response.send_message(embed=too_long, ephemeral=True)
+            return
 
-
-class AdEditMenuView(discord.ui.View):
-    """Discord allows only 5 inputs per window, so editing is split into two windows."""
-
-    def __init__(self, data: AdData):
-        super().__init__(timeout=None)
-        self.data = data
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await owner_only_interaction(interaction)
-
-    @discord.ui.button(label="Edit Titles, Description, Server Link, Button Name", style=discord.ButtonStyle.primary, row=0)
-    async def text_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AdTextModal(self.data))
-
-    @discord.ui.button(label="Edit Button Link, Mention, Color, Image", style=discord.ButtonStyle.primary, row=1)
-    async def style_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AdStyleModal(self.data))
-
-    @discord.ui.button(label="Back to Preview", style=discord.ButtonStyle.secondary, row=2)
-    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(embeds=preview_embeds(self.data), view=AdPreviewView(self.data))
-        self.stop()
-
-
-class AdPreviewView(discord.ui.View):
-    """The private (ephemeral) preview with Publish / Edit / Cancel."""
-
-    def __init__(self, data: AdData):
-        super().__init__(timeout=None)
-        self.data = data
-        # Row 0 is the real button, exactly as it will look under the published ad.
-        self.add_item(build_link_button(data, row=0))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return await owner_only_interaction(interaction)
-
-    def disable_all(self):
-        for child in self.children:
-            child.disabled = True
-
-    @discord.ui.button(label="Publish", style=discord.ButtonStyle.success, row=1)
-    async def publish_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        data = self.data
-
-        public_view = discord.ui.View(timeout=None)
-        public_view.add_item(build_link_button(data))
-        mentions = discord.AllowedMentions(everyone=True, roles=True, users=True)
-
-        sent = None
-        channel = interaction.channel
-        if channel is not None:
-            try:
-                sent = await channel.send(
-                    content=data.mention or None,
-                    embed=build_ad_embed(data),
-                    view=public_view,
-                    allowed_mentions=mentions
-                )
-            except discord.HTTPException:
-                sent = None
-
-        if sent is None:
-            # The bot cannot post in this channel (for example a user-install). Post as a public reply instead.
-            try:
-                sent = await interaction.followup.send(
-                    content=data.mention or None,
-                    embed=build_ad_embed(data),
-                    view=public_view,
-                    allowed_mentions=mentions,
-                    ephemeral=False,
-                    wait=True
-                )
-            except discord.HTTPException as e:
-                await interaction.followup.send(
-                    embed=error_embed("Could Not Publish", f"Discord returned: `{str(e)[:500]}`\nThe preview is still active."),
-                    ephemeral=True
-                )
-                return
-
-        self.disable_all()
-        where = f"<#{interaction.channel_id}>" if interaction.guild_id else "this chat"
-        done = discord.Embed(
-            title="Advertisement Published",
-            description=f"Posted in {where}.\n[Jump to message]({sent.jump_url})",
-            color=COLOR_GREEN
-        )
-        await interaction.edit_original_response(embeds=[done, build_ad_embed(data)], view=self)
-        self.stop()
-
-    @discord.ui.button(label="Edit", style=discord.ButtonStyle.primary, row=1)
-    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(view=AdEditMenuView(self.data))
-        self.stop()
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, row=1)
-    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="Advertisement Cancelled",
-            description="Nothing was posted and nobody was pinged.",
-            color=COLOR_GREY
-        )
-        # Replace the preview with a short note and remove every button
-        await interaction.response.edit_message(embeds=[embed], view=None)
-        self.stop()
+        await interaction.response.edit_message(view=AdLayoutView(new_data), allowed_mentions=NO_MENTIONS)
 
 
 # -------------------------------------------------------------
@@ -472,7 +526,7 @@ class UtilityCog(commands.Cog):
     @app_commands.describe(
         type_title="Header title at the top of the embed body.",
         embed_title="Large bold headline at the top of the description.",
-        description="Main promotional text. Type \\n for a new line.",
+        description="Main promotional text (max 1900 characters). Type \\n for a new line.",
         server_link="Invite link shown as a call-to-action line.",
         button_name="Text on the button under the embed.",
         button_redirect_link="Link opened when the button is clicked.",
@@ -487,7 +541,7 @@ class UtilityCog(commands.Cog):
         interaction: discord.Interaction,
         type_title: app_commands.Range[str, 1, 100],
         embed_title: app_commands.Range[str, 1, 150],
-        description: app_commands.Range[str, 1, 3000],
+        description: app_commands.Range[str, 1, MAX_DESCRIPTION_LENGTH],
         server_link: app_commands.Range[str, 1, 300],
         button_name: app_commands.Range[str, 1, 80],
         button_redirect_link: app_commands.Range[str, 1, 512],
@@ -522,6 +576,7 @@ class UtilityCog(commands.Cog):
                 return
 
         data = AdData(
+            ad_id=random.randint(10_000_000, 99_999_999),
             type_title=str(type_title).strip(),
             embed_title=str(embed_title).strip(),
             description=str(description).replace("\\n", "\n").strip(),
@@ -539,12 +594,16 @@ class UtilityCog(commands.Cog):
             )
             return
 
+        too_long = text_too_long_error(data)
+        if too_long:
+            await interaction.response.send_message(embed=too_long, ephemeral=True)
+            return
+
         # Ephemeral preview: only the person who ran the command can see it, and nobody is pinged.
         await interaction.response.send_message(
-            embeds=preview_embeds(data),
-            view=AdPreviewView(data),
+            view=AdLayoutView(data),
             ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none()
+            allowed_mentions=NO_MENTIONS
         )
 
     # =============================================================
