@@ -3,6 +3,11 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { boardEmbed, historyEmbed, errorEmbed } = require('../embeds');
 
+const QUICK_MS = 2000; // answer directly if ready within this time, otherwise show "thinking..."
+
+const trace = (interaction, step) =>
+  console.log(`[Cmd] /${interaction.commandName} ${step} (+${Date.now() - interaction.createdTimestamp}ms)`);
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('robloxstatus')
@@ -25,25 +30,51 @@ module.exports = {
     ),
 
   async execute(interaction, { tracker }) {
-    await interaction.deferReply();
     const view = interaction.options.getString('view') || 'current';
+    const count = interaction.options.getInteger('count') || 5;
 
-    if (view === 'history') {
-      const records = await tracker.getHistory(interaction.options.getInteger('count') || 5);
-      await interaction.editReply({ embeds: [historyEmbed(records, tracker.ctx)] });
+    // Builds the message. It never throws: problems become an error embed.
+    const build = async () => {
+      try {
+        if (view === 'history') {
+          return { embeds: [historyEmbed(await tracker.getHistory(count), tracker.ctx)] };
+        }
+        const { snapshot, stale } = await tracker.getSnapshot();
+        const warning = stale
+          ? `Could not reach Roblox just now. Showing data from <t:${Math.floor(Date.parse(snapshot.fetchedAt) / 1000)}:R>.`
+          : null;
+        return { embeds: [boardEmbed(snapshot, tracker.ctx, warning)] };
+      } catch (error) {
+        return {
+          embeds: [errorEmbed('Roblox Status Unavailable', `I could not read Roblox's status page.\n\`${error.message}\``)],
+        };
+      }
+    };
+
+    // Usually the answer is ready in well under a second, so reply directly.
+    const work = build();
+    let timer;
+    const early = await Promise.race([
+      work,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), QUICK_MS);
+      }),
+    ]);
+    clearTimeout(timer);
+
+    if (early) {
+      trace(interaction, 'replying');
+      await interaction.reply(early);
+      trace(interaction, 'replied');
       return;
     }
 
-    try {
-      const { snapshot, stale } = await tracker.getSnapshot();
-      const warning = stale
-        ? `Could not reach Roblox just now. Showing data from <t:${Math.floor(Date.parse(snapshot.fetchedAt) / 1000)}:R>.`
-        : null;
-      await interaction.editReply({ embeds: [boardEmbed(snapshot, tracker.ctx, warning)] });
-    } catch (error) {
-      await interaction.editReply({
-        embeds: [errorEmbed('Roblox Status Unavailable', `I could not read Roblox's status page.\n\`${error.message}\``)],
-      });
-    }
+    trace(interaction, 'deferring');
+    await interaction.deferReply();
+    trace(interaction, 'deferred');
+    const payload = await work;
+    trace(interaction, 'editing reply');
+    await interaction.editReply(payload);
+    trace(interaction, 'edited reply');
   },
 };

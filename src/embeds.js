@@ -77,13 +77,20 @@ function boardEmbed(snap, ctx, warning = null) {
     embed.addFields(field('Maintenance', text));
   }
 
-  const others = snap.services.filter((s) => !s.tracked && s.level !== 'operational');
-  if (others.length) {
-    const text = others
-      .slice(0, 10)
-      .map((s) => `${meta(s.level).emoji} ${s.group} / ${s.name} — ${meta(s.level).label}`)
-      .join('\n');
-    embed.addFields(field('Other Affected Services', text));
+  // When anything is not fine, show exactly what is broken AND what is still working.
+  const broken = snap.services.filter((s) => s.level !== 'operational');
+  if (broken.length) {
+    const shown = broken
+      .slice(0, 15)
+      .map((s) => `${meta(s.level).emoji} **${s.group} / ${s.name}** — ${meta(s.level).label}`);
+    const more = broken.length > 15 ? `\n…and ${broken.length - 15} more` : '';
+    embed.addFields(field(`Not Operational (${broken.length})`, shown.join('\n') + more));
+
+    const working = snap.services.filter((s) => s.level === 'operational');
+    const byGroup = new Map();
+    for (const s of working) byGroup.set(s.group, [...(byGroup.get(s.group) || []), s.name]);
+    const lines = [...byGroup].map(([group, names]) => `🟢 **${group}**: ${names.join(', ')}`);
+    embed.addFields(field(`Operational (${working.length})`, lines.join('\n') || 'None'));
   }
 
   return embed

@@ -38,6 +38,7 @@ module.exports = {
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    console.log(`[Cmd] /setup deferred (+${Date.now() - interaction.createdTimestamp}ms)`);
     const fail = (title, text) => interaction.editReply({ embeds: [errorEmbed(title, text)] });
 
     const type = interaction.options.getString('action', true);
@@ -70,6 +71,7 @@ module.exports = {
       return fail('Cannot Send There', `I could not post in <#${channelId}>. Give the bot **View Channel**, **Send Messages** and **Embed Links** there, then try again.`);
     }
 
+    console.log(`[Cmd] /setup notice posted, saving (+${Date.now() - interaction.createdTimestamp}ms)`);
     const previous = logChannels.get(type);
     await logChannels.set(type, {
       channelId,
