@@ -10,6 +10,8 @@ const { createStore } = require('./src/services/store');
 const { Tracker } = require('./src/services/tracker');
 const { LogChannels } = require('./src/services/logChannels');
 
+const COMMAND_TIMEOUT_MS = 25_000;
+
 // Every file in src/commands exports { data, execute }. Add more commands by dropping files there.
 function loadCommands() {
   const commands = new Collection();
@@ -60,19 +62,32 @@ async function main() {
     const command = commands.get(interaction.commandName);
     if (!command) return;
 
+    const started = Date.now();
+    console.log(`[Command] /${interaction.commandName} started by ${interaction.user.id}`);
+    let timer;
     try {
-      await command.execute(interaction, { tracker, config, logChannels });
+      // If a command takes too long, reply with an error instead of leaving Discord on "thinking...".
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out after ${COMMAND_TIMEOUT_MS / 1000}s`)), COMMAND_TIMEOUT_MS);
+      });
+      await Promise.race([command.execute(interaction, { tracker, config, logChannels }), timeout]);
+      console.log(`[Command] /${interaction.commandName} finished in ${Date.now() - started}ms`);
     } catch (error) {
       console.error(`[Command Error] /${interaction.commandName}: ${error.stack || error.message}`);
       const reply = { content: 'Something went wrong while running that command.', flags: MessageFlags.Ephemeral };
       try {
         if (interaction.deferred || interaction.replied) await interaction.followUp(reply);
         else await interaction.reply(reply);
-      } catch {
-        // the interaction expired: nothing more to do
+      } catch (replyError) {
+        console.error(`[Command Error] Could not send the error reply: ${replyError.message}`);
       }
+    } finally {
+      clearTimeout(timer);
     }
   });
+
+  client.on('error', (error) => console.error(`[Discord Error] ${error.message}`));
+  client.on('shardError', (error) => console.error(`[Discord Connection Error] ${error.message}`));
 
   const shutdown = async (signal) => {
     console.log(`[Shutdown] ${signal} received.`);
