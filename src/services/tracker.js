@@ -98,6 +98,10 @@ class Tracker {
       try {
         snapshot = await this.fetchSnapshot();
         this.failures = 0;
+        if (!this.loggedFirstCheck) {
+          this.loggedFirstCheck = true;
+          this.log.log(`[Tracker] First check OK: ${snapshot.services.length} services, ${snapshot.incidents.length} incident(s).`);
+        }
       } catch (error) {
         this.failures += 1;
         this.log.warn(`[Tracker] Could not read Roblox status (${this.failures} in a row): ${error.message}`);
