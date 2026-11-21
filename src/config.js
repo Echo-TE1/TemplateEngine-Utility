@@ -30,8 +30,6 @@ function list(name, fallback) {
   return items.length ? items : fallback;
 }
 
-const statusChannelId = str('STATUS_CHANNEL_ID');
-
 const config = {
   token: str('DISCORD_TOKEN'),
   port: int('PORT', 8080, 1),
@@ -39,8 +37,7 @@ const config = {
   // Only this user can run /setup.
   ownerId: str('BOT_OWNER_ID', '1219266886143967245'),
 
-  statusChannelId,
-  alertChannelId: str('ALERT_CHANNEL_ID', statusChannelId),
+  // Channels are not configured here: the owner sets them with /setup log.
   alertRoleId: str('ALERT_ROLE_ID'),
 
   statusUrl: str('ROBLOX_STATUS_API_URL', DEFAULT_STATUS_API),

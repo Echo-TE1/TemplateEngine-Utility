@@ -14,12 +14,14 @@ class Tracker {
    * @param {import('discord.js').Client} deps.client
    * @param {object} deps.store         createStore() result
    * @param {object} deps.config        src/config.js
+   * @param {object} deps.logChannels   LogChannels: the channel comes from /setup log (Platform Status)
    * @param {Function} [deps.fetchStatus]  (url) => normalized snapshot (replaceable for tests)
    */
-  constructor({ client, store, config, fetchStatus = require('./statusClient').fetchStatus, log = console }) {
+  constructor({ client, store, config, logChannels, fetchStatus = require('./statusClient').fetchStatus, log = console }) {
     this.client = client;
     this.store = store;
     this.config = config;
+    this.logChannels = logChannels;
     this.fetchStatus = fetchStatus;
     this.log = log;
 
@@ -30,6 +32,11 @@ class Tracker {
     this.timer = null;
     this.failures = 0;
     this.retry = []; // alerts that could not be sent yet
+  }
+
+  /** Where the live message and alerts go: the Platform Status channel set with /setup log (or null). */
+  get channelId() {
+    return this.logChannels.get('platform_status');
   }
 
   get ctx() {
@@ -136,7 +143,7 @@ class Tracker {
   }
 
   async #deliver(events) {
-    if (!this.config.alertChannelId) return; // no channel configured: tracking only
+    if (!this.channelId) return; // /setup log not done yet: tracking only
     const queue = [...this.retry, ...events.map((event) => ({ event, attempts: 0 }))];
     this.retry = [];
 
@@ -152,7 +159,7 @@ class Tracker {
   }
 
   async #send(event) {
-    const channel = await this.#channel(this.config.alertChannelId);
+    const channel = await this.#channel(this.channelId);
     const roleId = this.config.alertRoleId;
     const send = (embed, { ping = false, replyTo = null } = {}) =>
       channel.send({
@@ -196,7 +203,7 @@ class Tracker {
 
   /** Edits the one live status message. Only touches Discord when something changed (or it is getting old). */
   async #updateBoard(snapshot, warning = null) {
-    const channelId = this.config.statusChannelId;
+    const channelId = this.channelId;
     if (!channelId) return;
 
     const embed = embeds.boardEmbed(snapshot, this.ctx, warning);

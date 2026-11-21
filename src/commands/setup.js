@@ -27,7 +27,7 @@ module.exports = {
         ),
     ),
 
-  async execute(interaction, { config, logChannels }) {
+  async execute(interaction, { config, logChannels, tracker }) {
     // OWNER LOCK: nobody else can run this, in any server.
     if (interaction.user.id !== config.ownerId) {
       await interaction.reply({
@@ -79,8 +79,17 @@ module.exports = {
     });
 
     const changed = previous && previous !== channelId ? `\nPreviously: <#${previous}>` : '';
+    const roblox =
+      type === 'platform_status'
+        ? '\nThe live Roblox status message and outage alerts will be posted here.'
+        : '';
     await interaction.editReply({
-      embeds: [successEmbed(`${label} Set`, `**${label}** will go to <#${channelId}>.${changed}`)],
+      embeds: [successEmbed(`${label} Set`, `**${label}** will go to <#${channelId}>.${roblox}${changed}`)],
     });
+
+    // Post the live Roblox status message now instead of waiting for the next check.
+    if (type === 'platform_status' && tracker) {
+      tracker.poll().catch((error) => console.error(`[Setup] Immediate check failed: ${error.message}`));
+    }
   },
 };

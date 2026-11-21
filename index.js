@@ -35,9 +35,9 @@ async function main() {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   const commands = loadCommands();
   const store = await createStore(config);
-  const tracker = new Tracker({ client, store, config });
   const logChannels = new LogChannels({ client, store });
   await logChannels.load();
+  const tracker = new Tracker({ client, store, config, logChannels });
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
@@ -49,8 +49,8 @@ async function main() {
       console.error(`[Sync Error] ${error.message}`);
     }
 
-    if (!config.statusChannelId) {
-      console.warn('[Tracker] STATUS_CHANNEL_ID is not set: tracking history only, nothing will be posted.');
+    if (!logChannels.get('platform_status')) {
+      console.warn('[Tracker] No Platform Status channel yet. Run /setup log action:Platform Status to start posting.');
     }
     await tracker.start();
   });

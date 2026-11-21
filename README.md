@@ -17,7 +17,8 @@ A small Node.js / discord.js bot that watches Roblox's official status page and 
 - The bot posts a short notice in the channel first, so a channel it cannot write to is rejected instead of saved.
 - Settings are saved in MongoDB (or `data/log-channels.json`) and survive restarts. Running the command again for the same log replaces the channel.
 - A channel ID or a `#channel` mention both work. Get an ID with Developer Mode on: right-click the channel, **Copy Channel ID**.
-- This sets *where* each log goes. Code can post to one with `logChannels.send('bot_updates', { embeds: [...] })` (see `src/services/logChannels.js`); the Roblox alerts still use `STATUS_CHANNEL_ID` / `ALERT_CHANNEL_ID`, and nothing posts to the five logs automatically yet.
+- **Platform Status** is where the live Roblox status message and the outage alerts are posted. Until it is set, the bot only records history. Changing it moves the live message to the new channel.
+- The other four logs are saved but nothing posts to them automatically yet. Code can post to any of them with `logChannels.send('bot_updates', { embeds: [...] })` (see `src/services/logChannels.js`).
 
 ## Where the data comes from
 
@@ -30,9 +31,9 @@ Default tracked services: `Website, Game Join, Avatar, Marketplace, Data Store, 
 ## Setup (Render)
 
 1. **Build Command:** `npm install` **Start Command:** `node index.js` (the old Python start command no longer applies).
-2. Keep your existing `DISCORD_TOKEN` and `MONGO_URI`. Add `STATUS_CHANNEL_ID`.
-3. Give the bot these permissions in that channel: **View Channel, Send Messages, Embed Links, Read Message History**.
-4. Deploy. The first start posts the live status message and registers `/robloxstatus`.
+2. Keep your existing `DISCORD_TOKEN` and `MONGO_URI`. No channel variable is needed.
+3. Deploy. The bot registers `/robloxstatus` and `/setup`.
+4. In Discord run `/setup log action:Platform Status channel_id:<id>`. The bot needs **View Channel, Send Messages, Embed Links, Read Message History** in that channel. The live status message appears right away.
 
 Registering commands replaces the bot's global commands, so the old `/ad` and `/channel` commands disappear on first start.
 
@@ -41,11 +42,9 @@ Registering commands replaces the bot's global commands, so the old `/ad` and `/
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `DISCORD_TOKEN` | yes | | Bot token (already on Render). |
-| `STATUS_CHANNEL_ID` | yes* | | Channel for the live message and alerts. *Without it the bot only records history. |
-| `MONGO_URI` | no | | Stores state + history. Without it a local file is used (lost on redeploy on Render's free plan). |
+| `MONGO_URI` | no | | Stores state, history and log channels. Without it a local file is used (lost on redeploy on Render's free plan, so you would have to run `/setup log` again). |
 | `PORT` | no | `8080` | Render sets this. |
 | `BOT_OWNER_ID` | no | `1219266886143967245` | The only user allowed to run `/setup`. |
-| `ALERT_CHANNEL_ID` | no | `STATUS_CHANNEL_ID` | Send alerts to a different channel. |
 | `ALERT_ROLE_ID` | no | | Role pinged when an incident starts and when it is resolved. |
 | `TRACKED_SERVICES` | no | see above | Comma separated; case and spaces are ignored. |
 | `ALERT_SCOPE` | no | `tracked` | `tracked` = alert only for tracked services, `all` = every Roblox service. |
@@ -55,7 +54,7 @@ Registering commands replaces the bot's global commands, so the old `/ad` and `/
 | `NOTIFY_ON_STARTUP` | no | `false` | Announce incidents that are already running on the very first start. |
 | `MONGO_DB_NAME`, `DATA_DIR`, `HISTORY_LIMIT`, `ROBLOX_STATUS_API_URL`, `ROBLOX_STATUS_PAGE_URL` | no | | Advanced, see `.env.example`. |
 
-The old Python-bot variables (`ROBLOX_COOKIE`, `ROBLOX_GROUP_ID`, `PREMIUM_DESIGN_CHANNEL_ID`, `NON_PREMIUM_DESIGN_CHANNEL_ID`) are no longer used and can be deleted.
+The old Python-bot variables (`ROBLOX_COOKIE`, `ROBLOX_GROUP_ID`, `PREMIUM_DESIGN_CHANNEL_ID`, `NON_PREMIUM_DESIGN_CHANNEL_ID`) are no longer used and can be deleted, as can `STATUS_CHANNEL_ID` and `ALERT_CHANNEL_ID` if you added them.
 
 ## How duplicates are prevented
 
@@ -85,7 +84,7 @@ test/                     npm test
 
 ```
 npm install
-cp .env.example .env   # fill in DISCORD_TOKEN and STATUS_CHANNEL_ID
+cp .env.example .env   # fill in DISCORD_TOKEN, then run /setup log in Discord
 npm run dev            # needs Node 20.6+; or export the variables and run npm start
 npm test
 ```
