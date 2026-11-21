@@ -3,6 +3,7 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { LOG_TYPES, labelFor } = require('../services/logChannels');
 const { errorEmbed, successEmbed } = require('../embeds');
+const { respondWhenReady, trace } = require('../lib/respond');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -37,60 +38,70 @@ module.exports = {
       return;
     }
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    console.log(`[Cmd] /setup deferred (+${Date.now() - interaction.createdTimestamp}ms)`);
-    const fail = (title, text) => interaction.editReply({ embeds: [errorEmbed(title, text)] });
+    const fail = (title, text) => ({ embeds: [errorEmbed(title, text)] });
+    let startRobloxCheck = false;
 
-    const type = interaction.options.getString('action', true);
-    const label = labelFor(type);
-    if (!label) return fail('Unknown Log', 'That log type does not exist.');
+    // Does the work and returns the message to show. Never throws.
+    const build = async () => {
+      try {
+        const type = interaction.options.getString('action', true);
+        const label = labelFor(type);
+        if (!label) return fail('Unknown Log', 'That log type does not exist.');
 
-    // Accept a plain ID or a <#id> mention.
-    const channelId = interaction.options.getString('channel_id', true).trim().replace(/^<#(\d+)>$/, '$1');
-    if (!/^\d{17,20}$/.test(channelId)) {
-      return fail('Invalid Channel ID', 'A channel ID is 17-20 digits. In Discord: right-click the channel, then Copy Channel ID (turn on Developer Mode first).');
-    }
+        // Accept a plain ID or a <#id> mention.
+        const channelId = interaction.options.getString('channel_id', true).trim().replace(/^<#(\d+)>$/, '$1');
+        if (!/^\d{17,20}$/.test(channelId)) {
+          return fail('Invalid Channel ID', 'A channel ID is 17-20 digits. In Discord: right-click the channel, then Copy Channel ID (turn on Developer Mode first).');
+        }
 
-    let channel = null;
-    try {
-      channel = await interaction.client.channels.fetch(channelId);
-    } catch {
-      channel = null;
-    }
-    if (!channel || !channel.isTextBased()) {
-      return fail('Channel Not Found', `I cannot see a text channel with ID \`${channelId}\`. Make sure the bot is in that server and can view the channel.`);
-    }
+        let channel = null;
+        try {
+          channel = await interaction.client.channels.fetch(channelId);
+        } catch {
+          channel = null;
+        }
+        if (!channel || !channel.isTextBased()) {
+          return fail('Channel Not Found', `I cannot see a text channel with ID \`${channelId}\`. Make sure the bot is in that server and can view the channel.`);
+        }
+        trace(interaction, 'channel found');
 
-    // Post a short notice: this proves the bot can actually write there before we save anything.
-    try {
-      await channel.send({
-        embeds: [successEmbed(`${label} channel set`, `This channel will now receive **${label}** posts.`)],
-        allowedMentions: { parse: [] },
-      });
-    } catch {
-      return fail('Cannot Send There', `I could not post in <#${channelId}>. Give the bot **View Channel**, **Send Messages** and **Embed Links** there, then try again.`);
-    }
+        // Post a short notice: this proves the bot can actually write there before we save anything.
+        try {
+          await channel.send({
+            embeds: [successEmbed(`${label} channel set`, `This channel will now receive **${label}** posts.`)],
+            allowedMentions: { parse: [] },
+          });
+        } catch {
+          return fail('Cannot Send There', `I could not post in <#${channelId}>. Give the bot **View Channel**, **Send Messages** and **Embed Links** there, then try again.`);
+        }
+        trace(interaction, 'notice posted, saving');
 
-    console.log(`[Cmd] /setup notice posted, saving (+${Date.now() - interaction.createdTimestamp}ms)`);
-    const previous = logChannels.get(type);
-    await logChannels.set(type, {
-      channelId,
-      guildId: channel.guildId || null,
-      setBy: interaction.user.id,
-      setAt: new Date().toISOString(),
-    });
+        const previous = logChannels.get(type);
+        await logChannels.set(type, {
+          channelId,
+          guildId: channel.guildId || null,
+          setBy: interaction.user.id,
+          setAt: new Date().toISOString(),
+        });
+        trace(interaction, 'saved');
 
-    const changed = previous && previous !== channelId ? `\nPreviously: <#${previous}>` : '';
-    const roblox =
-      type === 'platform_status'
-        ? '\nThe live Roblox status message and outage alerts will be posted here.'
-        : '';
-    await interaction.editReply({
-      embeds: [successEmbed(`${label} Set`, `**${label}** will go to <#${channelId}>.${roblox}${changed}`)],
-    });
+        const changed = previous && previous !== channelId ? `\nPreviously: <#${previous}>` : '';
+        const roblox =
+          type === 'platform_status'
+            ? '\nThe live Roblox status message and outage alerts will be posted here.'
+            : '';
+        startRobloxCheck = type === 'platform_status';
+        return { embeds: [successEmbed(`${label} Set`, `**${label}** will go to <#${channelId}>.${roblox}${changed}`)] };
+      } catch (error) {
+        console.error(`[Cmd] /setup failed: ${error.stack || error.message}`);
+        return fail('Setup Failed', `Something went wrong while saving.\n\`${error.message}\``);
+      }
+    };
+
+    await respondWhenReady(interaction, build, { ephemeral: true });
 
     // Post the live Roblox status message now instead of waiting for the next check.
-    if (type === 'platform_status' && tracker) {
+    if (startRobloxCheck && tracker) {
       tracker.poll().catch((error) => console.error(`[Setup] Immediate check failed: ${error.message}`));
     }
   },

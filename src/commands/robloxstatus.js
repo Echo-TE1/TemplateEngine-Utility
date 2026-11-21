@@ -2,11 +2,7 @@
 
 const { SlashCommandBuilder } = require('discord.js');
 const { boardEmbed, historyEmbed, errorEmbed } = require('../embeds');
-
-const QUICK_MS = 2000; // answer directly if ready within this time, otherwise show "thinking..."
-
-const trace = (interaction, step) =>
-  console.log(`[Cmd] /${interaction.commandName} ${step} (+${Date.now() - interaction.createdTimestamp}ms)`);
+const { respondWhenReady } = require('../lib/respond');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -51,30 +47,6 @@ module.exports = {
       }
     };
 
-    // Usually the answer is ready in well under a second, so reply directly.
-    const work = build();
-    let timer;
-    const early = await Promise.race([
-      work,
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve(null), QUICK_MS);
-      }),
-    ]);
-    clearTimeout(timer);
-
-    if (early) {
-      trace(interaction, 'replying');
-      await interaction.reply(early);
-      trace(interaction, 'replied');
-      return;
-    }
-
-    trace(interaction, 'deferring');
-    await interaction.deferReply();
-    trace(interaction, 'deferred');
-    const payload = await work;
-    trace(interaction, 'editing reply');
-    await interaction.editReply(payload);
-    trace(interaction, 'edited reply');
+    await respondWhenReady(interaction, build);
   },
 };
