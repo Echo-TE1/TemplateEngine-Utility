@@ -2,6 +2,7 @@
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { errorEmbed, successEmbed } = require('../embeds');
+const { editReply } = require('../lib/respond');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -35,7 +36,7 @@ module.exports = {
       channel = null;
     }
     if (!channel || !channel.isTextBased()) {
-      return interaction.editReply({ embeds: [errorEmbed('Channel Not Found', `I cannot see a text channel with ID \`${channelId}\`.`)] });
+      return editReply(interaction, { embeds: [errorEmbed('Channel Not Found', `I cannot see a text channel with ID \`${channelId}\`.`)] });
     }
 
     try {
@@ -54,11 +55,11 @@ module.exports = {
         }
       }
     } catch (error) {
-      return interaction.editReply({
+      return editReply(interaction, {
         embeds: [errorEmbed('Cannot Post There', `${error.message}\nThe bot needs View Channel, Send Messages, Embed Links and Add Reactions in <#${channelId}>.`)],
       });
     }
-    return interaction.editReply({
+    return editReply(interaction, {
       embeds: [
         successEmbed(
           'Reaction message posted',

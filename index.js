@@ -14,6 +14,7 @@ const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { ReactionRoles } = require('./src/services/reactionRoles');
+const { editReply } = require('./src/lib/respond');
 const { MemberCountNote } = require('./src/services/memberCount');
 const { TempChannels } = require('./src/services/tempChannels');
 const { RobloxProfiles } = require('./src/services/robloxProfile');
@@ -44,6 +45,9 @@ function loadCommands() {
 // If Discord refuses it, boot() is run again without it so the rest of the bot keeps working.
 async function main() {
   config.validate();
+  const major = Number.parseInt(process.versions.node, 10);
+  console.log(`[Boot] Node ${process.version}, discord.js ${require('discord.js').version}`);
+  if (major % 2 === 1 || major > 24) console.warn(`[Boot] Node ${process.version} is not an LTS release; discord.js is tested on Node 20/22/24. package.json pins 22.x.`);
 
   // Start the web server so Render and the cron job can ping the bot.
   keepAlive(config.port);
@@ -162,7 +166,9 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
       console.error(`[Command Error] /${interaction.commandName}: ${error.stack || error.message}`);
       const reply = { content: 'Something went wrong while running that command.', flags: MessageFlags.Ephemeral };
       try {
-        if (interaction.deferred || interaction.replied) await interaction.followUp(reply);
+        // Fill in "thinking..." with the error (this has its own fallbacks), or reply if nothing was sent yet.
+        if (interaction.deferred) await editReply(interaction, { content: reply.content });
+        else if (interaction.replied) await interaction.followUp(reply);
         else await interaction.reply(reply);
       } catch (replyError) {
         console.error(`[Command Error] Could not send the error reply: ${replyError.message}`);

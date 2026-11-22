@@ -67,7 +67,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 
 ## Setup (Render)
 
-1. **Build Command:** `npm install` **Start Command:** `node index.js`.
+1. **Build Command:** `npm install` **Start Command:** `node index.js`. The project pins **Node 22** (`engines` in `package.json` and `.node-version`); Render's default was Node 26, which discord.js does not support yet.
 2. Keep `DISCORD_TOKEN` and `MONGO_URI`. No channel variables are needed.
 3. Deploy. The bot registers its commands (this replaces the old `/ad` command; `/channel` was ported).
 4. In Discord, run `/setup log` for each log you want. Give the bot **View Channel, Send Messages, Embed Links, Read Message History** in those channels. Platform Status shows the live message right away.

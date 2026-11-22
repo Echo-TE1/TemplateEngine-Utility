@@ -13,6 +13,7 @@ const {
 } = require('discord.js');
 const { errorEmbed, successEmbed, profileEmbed, profilePanelEmbed } = require('../embeds');
 const { ProfileError } = require('../services/robloxProfile');
+const { editReply } = require('../lib/respond');
 
 const PREFIX = 'rp:';
 const SEARCH = `${PREFIX}search`;
@@ -87,10 +88,9 @@ async function withTimeout(promise) {
 
 async function finish(interaction, payload) {
   try {
-    await interaction.editReply(payload);
+    await editReply(interaction, payload);
   } catch (error) {
-    console.error(`[Profile] Could not edit the reply: ${error.message}`);
-    await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => {});
+    console.error(`[Profile] Could not deliver the result: ${error.message}`);
   }
 }
 
@@ -131,9 +131,9 @@ module.exports = {
     try {
       const target = await interaction.client.channels.fetch(channel.id);
       await context.profilePanel.publish(target);
-      await interaction.editReply({ embeds: [successEmbed('Panel posted', `The lookup panel is now in <#${channel.id}>. It is kept in place across redeploys.`)] });
+      await finish(interaction, { embeds: [successEmbed('Panel posted', `The lookup panel is now in <#${channel.id}>. It is kept in place across redeploys.`)] });
     } catch (error) {
-      await interaction.editReply({
+      await finish(interaction, {
         embeds: [errorEmbed('Cannot Post There', `${error.message}\nThe bot needs View Channel, Send Messages and Embed Links in <#${channel.id}>.`)],
       });
     }
