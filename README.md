@@ -14,6 +14,11 @@ A small Node.js / discord.js bot that watches Roblox and tells your server when 
 
 Nothing is posted to a log until you set its channel.
 
+### Message mirror
+
+The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments, link to the original). When the original is sent the bot reacts with ✅. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
+Needs: the **Message Content Intent** switched on in the Discord Developer Portal (Bot > Privileged Gateway Intents), and in the watched channel the bot needs View Channel, Read Message History and Add Reactions. If Discord refuses the intent the bot still starts, with the mirror off and a warning in Bot Updates and `/botstatus`. The copy links are saved (last 500), so edits and deletes still work after a restart. Change the channel/user with `MIRROR_CHANNEL_ID` / `MIRROR_USER_ID`, or turn it off with `MIRROR_ENABLED=false`.
+
 ## Commands
 
 | Command | Who | What it does |
@@ -71,6 +76,9 @@ Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on 
 | `NEWS_POLL_MINUTES` | `30` | News check frequency (min 5). |
 | `NEWS_FEEDS` | Roblox Blog, DevForum Updates | `Name=https://feed-url,...` |
 | `BOT_ALERT_AFTER_MINUTES` | `10` | Minutes the status API must be unreachable before Bot Updates is told. |
+| `MIRROR_ENABLED` | `true` | Turn the message mirror on/off. |
+| `MIRROR_CHANNEL_ID` | `1573743378368176148` | Channel to watch. |
+| `MIRROR_USER_ID` | `1219266886143967245` | Only this user's messages are copied. |
 | `BACKUP_DAILY` | `true` | Post a backup file to Bot Updates once a day (after midnight JST). |
 | `MONGO_DB_NAME`, `DATA_DIR`, `HISTORY_LIMIT`, `ROBLOX_STATUS_API_URL`, `ROBLOX_STATUS_PAGE_URL` | | Advanced, see `.env.example`. |
 
@@ -107,6 +115,7 @@ src/services/tracker.js       status polling, alerts, live message, routing to l
 src/services/health.js        direct checks of roblox.com and the APIs
 src/services/news.js          Roblox news feeds
 src/services/backup.js        /backup and the daily backup
+src/services/mirror.js        message mirror (copy / edit / delete to Bot Updates)
 src/services/notifier.js      posts to the log channels (with retry)
 src/services/logChannels.js   which channel each log uses
 src/services/serviceRoles.js  which role is pinged per service

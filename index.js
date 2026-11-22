@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
+const { Client, Collection, Events, GatewayIntentBits, MessageFlags, Partials } = require('discord.js');
 
 const config = require('./src/config');
 const { keepAlive } = require('./keepAlive');
@@ -14,6 +14,7 @@ const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { BackupScheduler } = require('./src/services/backup');
+const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
 
 const COMMAND_TIMEOUT_MS = 25_000;
@@ -35,13 +36,33 @@ function loadCommands() {
   return commands;
 }
 
+// Reading message text needs the privileged Message Content intent (Developer Portal > Bot).
+// If Discord refuses it, boot() is run again without it so the rest of the bot keeps working.
 async function main() {
   config.validate();
 
   // Start the web server so Render and the cron job can ping the bot.
   keepAlive(config.port);
 
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  try {
+    await boot({ messageContent: config.mirrorEnabled });
+  } catch (error) {
+    if (config.mirrorEnabled && /disallowed intents/i.test(error.message)) {
+      console.error('[Mirror] Discord refused the Message Content intent. Enable it in the Developer Portal (Bot > Privileged Gateway Intents). Starting without the message mirror.');
+      await boot({ messageContent: false, mirrorIntentRefused: true });
+    } else {
+      throw error;
+    }
+  }
+}
+
+async function boot({ messageContent, mirrorIntentRefused = false }) {
+  const intents = [GatewayIntentBits.Guilds];
+  if (messageContent) intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent);
+  const client = new Client({
+    intents,
+    partials: messageContent ? [Partials.Message, Partials.Channel] : [],
+  });
   const commands = loadCommands();
   const store = await createStore(config);
   const logChannels = new LogChannels({ client, store });
@@ -53,9 +74,14 @@ async function main() {
   const health = config.healthEnabled ? new HealthMonitor({ store, config, notifier }) : null;
   const news = config.newsEnabled ? new NewsWatcher({ store, config, notifier }) : null;
   const backups = new BackupScheduler({ store, logChannels, serviceRoles, notifier, config });
+  const mirror = messageContent ? new MessageMirror({ store, logChannels, config }) : null;
+  if (mirror) {
+    await mirror.load();
+    mirror.register(client, { Events });
+  }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, mirrorIntentRefused, startedAt };
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
@@ -80,6 +106,8 @@ async function main() {
     const warnings = [];
     if (store.fellBack) warnings.push('MongoDB could not be reached, so local files are used. Settings and history are lost on redeploy.');
     else if (!store.persistent) warnings.push('No MONGO_URI is set, so settings and history are lost on redeploy.');
+    if (mirrorIntentRefused) warnings.push('Message mirror is OFF: enable the Message Content Intent in the Discord Developer Portal, then redeploy.');
+    else if (mirror && !logChannels.get('bot_updates')) warnings.push('Message mirror needs a Bot Updates channel (/setup log).');
     const commit = (process.env.RENDER_GIT_COMMIT || '').slice(0, 7);
     await notifier.post('bot_updates', {
       embeds: [
@@ -140,11 +168,16 @@ async function main() {
     await client.destroy();
     process.exit(0);
   };
+
+  try {
+    await client.login(config.token);
+  } catch (error) {
+    await client.destroy().catch(() => {});
+    throw error;
+  }
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('unhandledRejection', (error) => console.error('[Unhandled Rejection]', error));
-
-  await client.login(config.token);
 }
 
 main().catch((error) => {

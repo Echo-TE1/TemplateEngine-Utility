@@ -7,7 +7,7 @@ const { LOG_TYPES } = require('../services/logChannels');
 const { duration, ts } = require('../lib/format');
 
 function collect(context, client) {
-  const { tracker, health, news, store, logChannels, config, startedAt } = context;
+  const { tracker, health, news, mirror, mirrorIntentRefused, store, logChannels, config, startedAt } = context;
   let problems = false;
 
   // Roblox status API (the main data source)
@@ -48,6 +48,22 @@ function collect(context, client) {
       })
     : [];
 
+  // Message mirror
+  let mirrorText = null;
+  if (mirror) {
+    const st = mirror.stats;
+    mirrorText = `✅ ${st.mirrored} copied • ${st.edited} edited • ${st.deleted} deleted`;
+    if (st.lastError) {
+      problems = true;
+      mirrorText = `❌ ${st.errors} error(s). Last: ${st.lastError}`;
+    }
+  } else if (mirrorIntentRefused) {
+    problems = true;
+    mirrorText = '❌ OFF: Message Content Intent is not enabled in the Developer Portal';
+  } else if (!config.mirrorEnabled) {
+    mirrorText = 'Disabled';
+  }
+
   // Database
   let database = store.persistent
     ? `✅ ${store.kind} (saved permanently)`
@@ -72,6 +88,7 @@ function collect(context, client) {
     statusApi,
     health: healthRows,
     news: newsRows,
+    mirror: mirrorText,
     logs: `${setCount}/${LOG_TYPES.length} set up` + (setCount < LOG_TYPES.length ? ' (see /setup view)' : ''),
     version: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7),
   };

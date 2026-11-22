@@ -341,6 +341,7 @@ function botStatusEmbed(info) {
       ),
       field('Logs set up', info.logs),
     );
+  if (info.mirror) embed.addFields(field('Message mirror', info.mirror));
   if (info.version) embed.setFooter({ text: `Version ${info.version} • Node ${process.version}` });
   return embed.setTimestamp(new Date());
 }
