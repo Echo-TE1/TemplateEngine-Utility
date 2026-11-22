@@ -105,3 +105,41 @@ test('Notifier: skips logs that are not set up, posts without pings, retries the
   assert.equal(failures, 99 - 3);
   assert.equal(notifier.queue.length, 0);
 });
+
+let hasDiscord = true;
+try { require.resolve('discord.js'); } catch { hasDiscord = false; }
+
+test('HealthMonitor: a failure that also hits non-Roblox sites is ignored; a real one is reported once after retries', { skip: !hasDiscord && 'discord.js is not installed here' }, async () => {
+  const { HealthMonitor } = require('../src/services/health');
+  const posts = [];
+  const notifier = { post: async (type, payload) => { posts.push(type); return true; } };
+  const config = {
+    healthTargets: [{ name: 'Users API', url: 'https://users.roblox.com/x' }],
+    healthControlUrls: ['https://control.example/a'],
+    healthFailThreshold: 2, healthTimeoutSeconds: 1, healthIntervalSeconds: 120,
+  };
+  let robloxUp = false;
+  let controlUp = false;
+  const requestFn = async (url) => {
+    const up = url.includes('roblox') ? robloxUp : controlUp;
+    if (!up) throw new Error('timeout');
+    return { status: 200, ms: 5 };
+  };
+  const monitor = new HealthMonitor({ store: tmp(), config, notifier, requestFn, log: quiet });
+  monitor.retryPauseMs = 0;
+
+  // Baseline: up.
+  robloxUp = true; controlUp = true;
+  await monitor.runOnce();
+
+  // The bot's own network is down: nothing is announced, however long it lasts.
+  robloxUp = false; controlUp = false;
+  for (let i = 0; i < 5; i += 1) await monitor.runOnce();
+  assert.deepEqual(posts, []);
+  assert.equal(monitor.latest['Users API'].inconclusive, true);
+
+  // Only Roblox is unreachable: reported after the threshold, exactly once.
+  controlUp = true;
+  for (let i = 0; i < 4; i += 1) await monitor.runOnce();
+  assert.deepEqual(posts, ['api_status']);
+});

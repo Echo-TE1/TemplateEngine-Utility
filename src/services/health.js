@@ -44,19 +44,48 @@ class HealthMonitor {
     if (this.loop) this.loop.stop();
   }
 
+  // One attempt; a failure is tried once more after a short pause, so a single dropped request never counts.
   async #check(target) {
-    const at = new Date().toISOString();
-    try {
-      const result = await this.request(target.url, { timeoutMs: this.config.healthTimeoutSeconds * 1000 });
-      return { ok: isOk(result.status), httpStatus: result.status, ms: result.ms, at };
-    } catch (error) {
-      return { ok: false, httpStatus: null, ms: null, error: error.message, at };
+    let last;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const at = new Date().toISOString();
+      try {
+        const result = await this.request(target.url, { timeoutMs: this.config.healthTimeoutSeconds * 1000 });
+        last = { ok: isOk(result.status), httpStatus: result.status, ms: result.ms, at };
+      } catch (error) {
+        last = { ok: false, httpStatus: null, ms: null, error: error.message, at };
+      }
+      if (last.ok) break;
+      if (attempt === 1) await new Promise((resolve) => setTimeout(resolve, this.retryPauseMs ?? 2000));
     }
+    return last;
+  }
+
+  // Can this host reach the internet at all? Checked against sites that are not Roblox.
+  async #controlReachable() {
+    const urls = this.config.healthControlUrls || [];
+    if (!urls.length) return true;
+    const answers = await Promise.all(
+      urls.map((url) =>
+        this.request(url, { timeoutMs: this.config.healthTimeoutSeconds * 1000 })
+          .then((r) => isOk(r.status))
+          .catch(() => false),
+      ),
+    );
+    return answers.some(Boolean);
   }
 
   async runOnce() {
     const results = await Promise.all(this.targets.map(async (t) => [t, await this.#check(t)]));
     const events = [];
+
+    // If every failure is also a failure for non-Roblox sites, the bot's own connection is the problem.
+    // Say nothing about Roblox in that case: it would be a false alarm.
+    if (results.some(([, r]) => !r.ok) && !(await this.#controlReachable())) {
+      this.log.warn('[Health] This host could not reach other sites either, so these results are ignored (not a Roblox problem).');
+      for (const [target, result] of results) this.latest[target.name] = { ...result, inconclusive: true };
+      return;
+    }
 
     for (const [target, result] of results) {
       this.latest[target.name] = result;

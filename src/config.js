@@ -87,8 +87,10 @@ const config = {
   // Direct health checks (Website Status / API Status logs).
   healthEnabled: bool('HEALTH_CHECKS', true),
   healthIntervalSeconds: int('HEALTH_INTERVAL_SECONDS', 120, 30),
-  healthFailThreshold: int('HEALTH_FAIL_THRESHOLD', 2, 1), // failed checks in a row before "down"
-  healthTimeoutSeconds: int('HEALTH_TIMEOUT_SECONDS', 8, 2),
+  healthFailThreshold: int('HEALTH_FAIL_THRESHOLD', 3, 1), // failed checks in a row before "down"
+  healthTimeoutSeconds: int('HEALTH_TIMEOUT_SECONDS', 15, 2),
+  // Sites that are not Roblox. If none of them answer either, the problem is this host's network, not Roblox.
+  healthControlUrls: list('HEALTH_CONTROL_URLS', ['https://discord.com/api/v10/gateway', 'https://www.cloudflare.com/cdn-cgi/trace']),
   healthTargets: targets('HEALTH_TARGETS', DEFAULT_HEALTH_TARGETS),
 
   // Roblox news (Roblox Updates log).

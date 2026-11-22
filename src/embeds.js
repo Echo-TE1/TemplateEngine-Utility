@@ -232,7 +232,7 @@ function healthEmbed({ target, change, result, state }) {
       )
       .addFields(
         field('Last result', reason, true),
-        field('Detected', ts(state.downSince, 'R'), true),
+        field('Detected', ts(state.downSince, 'f'), true),
         field('Checked URL', target.url),
       )
       .setTimestamp(new Date());

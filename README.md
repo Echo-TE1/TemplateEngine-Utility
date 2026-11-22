@@ -61,7 +61,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 1. **Roblox's status page** (status.roblox.com runs on Status.io; the bot reads its public JSON). Services are grouped as User, Player and Creator, and the tracked services below are matched in every group.
    Default tracked services: `Website, Game Join, Avatar, Marketplace, Data Store, Authentication`.
    > **Authentication is not a component on Roblox's status page**, so it is flagged only when an incident's text mentions authentication, login, sign in/up, 2-step or 2FA.
-2. **Direct checks of Roblox** (`HEALTH_TARGETS`): `www.roblox.com`, `auth.roblox.com`, `users.roblox.com`, `games.roblox.com`. Any answer below HTTP 500 counts as up. A target is reported **down after 2 failed checks in a row** and **recovered after 2 good ones**, so one slow answer does not cause an alert. These can notice trouble before Roblox's own page does, but they only see what the bot's host can reach.
+2. **Direct checks of Roblox** (`HEALTH_TARGETS`): `www.roblox.com`, `auth.roblox.com`, `users.roblox.com`, `games.roblox.com`. Any answer below HTTP 500 counts as up. A failed check is retried once straight away. A target is reported **down after 3 failed checks in a row** (each tried twice, 15 s timeout) and **recovered after 2 good ones**. If sites that are not Roblox (`HEALTH_CONTROL_URLS`) also fail, the bot's own connection is the problem and nothing is reported. These can notice trouble before Roblox's own page does, but they only see what the bot's host can reach.
 3. **News feeds** (`NEWS_FEEDS`): the Roblox Blog and the DevForum "Updates" category, as standard RSS feeds. The first read of a feed only remembers what is already there (no flood); after that, new items are posted once each (at most 5 per check).
    > The default feed URLs are the standard paths for those sites and were **not verified from the build environment**. If one is wrong, the bot logs it once and `/botstatus` shows it as failing; set `NEWS_FEEDS` to the right URL.
 
@@ -92,8 +92,9 @@ Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on 
 | `NOTIFY_ON_STARTUP` | `false` | Announce incidents already running on the very first start. |
 | `HEALTH_CHECKS` | `true` | Turn the direct checks on/off. |
 | `HEALTH_INTERVAL_SECONDS` | `120` | Direct check frequency (min 30). |
-| `HEALTH_FAIL_THRESHOLD` | `2` | Failed checks in a row before "down". |
-| `HEALTH_TIMEOUT_SECONDS` | `8` | Give up on one check after this long. |
+| `HEALTH_FAIL_THRESHOLD` | `3` | Failed checks in a row before "down". |
+| `HEALTH_TIMEOUT_SECONDS` | `15` | Give up on one check after this long. |
+| `HEALTH_CONTROL_URLS` | Discord, Cloudflare | Non-Roblox sites used to rule out the host's own network problems. |
 | `HEALTH_TARGETS` | see above | `Name=https://url,Name2=https://url2`. A target named `Website` reports to Website Status, all others to API Status. |
 | `NEWS_ENABLED` | `true` | Turn Roblox news on/off. |
 | `NEWS_POLL_MINUTES` | `30` | News check frequency (min 5). |
@@ -124,7 +125,7 @@ To cut it: raise `POLL_INTERVAL_SECONDS` (300 = 5x less), `HEALTH_INTERVAL_SECON
 - Each incident update is keyed by its timestamp and announced once.
 - An incident is only resolved after it has been missing for `RESOLVE_CONFIRM_POLLS` checks.
 - A service change is not announced separately when an incident that covers it starts in the same check.
-- Direct checks need 2 failures to go down and 2 successes to recover.
+- Direct checks retry once, need 3 failures in a row to go down and 2 successes to recover, and are ignored when the host cannot reach other sites either.
 - Only one status check runs at a time; failed posts are retried up to 3 times.
 - If Roblox's status API is unreachable, nothing is announced; the live message gets a warning after 3 failed checks. Problems are shown by `/botstatus`, not posted anywhere.
 
