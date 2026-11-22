@@ -117,7 +117,7 @@ test('ensureRoles creates a role per log, reuses by name, recreates deleted ones
   const logChannels = { get: (t) => (t === 'bot_updates' ? 'chan' : null) };
 
   const created = await rr.ensureRoles(logChannels, {});
-  assert.equal(created.length, 4); // API Status reused by name
+  assert.equal(created.length, 5); // API Status reused by name
   assert.equal(rr.roleFor('api_status'), 'x1');
   assert.equal(rr.roleFor('game_updates') !== null, true);
   assert.deepEqual(await rr.ensureRoles(logChannels, {}), []);
@@ -159,7 +159,7 @@ test('ensureMessage: after a redeploy it refreshes the message, re-adds reaction
 
   assert.equal(await rr.ensureMessage(), 'ok');
   assert.equal(message.edits, 1);
-  assert.equal(message.reacted.length, 4); // the four emojis that were missing
+  assert.equal(message.reacted.length, 5); // the five emojis that were missing
   assert.deepEqual(rr.subscribers('game_updates'), ['new']);
   assert.deepEqual(message.roleOps, [['add', 'new', 'roleG'], ['remove', 'gone', 'roleG']]);
 });

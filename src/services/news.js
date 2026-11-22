@@ -4,6 +4,7 @@ const { request } = require('../lib/http');
 const { startLoop } = require('../lib/loop');
 const { parseFeed, findNew } = require('../lib/feed');
 const { newsEmbed } = require('../embeds');
+const { matchesKeywords } = require('../lib/economy');
 
 const safeKey = (s) => String(s).replace(/[.$]/g, '_');
 
@@ -94,7 +95,12 @@ class NewsWatcher {
     await this.store.setDoc('news', { feeds: this.state });
 
     for (const { feed, item } of toPost) {
-      await this.notifier.post('game_updates', { embeds: [newsEmbed(feed, item)] });
+      const payload = { embeds: [newsEmbed(feed, item)] };
+      await this.notifier.post('game_updates', payload);
+      // Robux and marketplace related news also goes to the Economy log.
+      if (this.config.economyKeywords && matchesKeywords(`${item.title || ''} ${item.summary || ''}`, this.config.economyKeywords)) {
+        await this.notifier.post('economy_updates', payload).catch(() => {});
+      }
     }
     if (toPost.length) this.log.log(`[News] Posted ${toPost.length} new item(s).`);
   }

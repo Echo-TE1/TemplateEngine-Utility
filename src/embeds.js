@@ -343,6 +343,7 @@ function botStatusEmbed(info) {
     );
   if (info.mirror) embed.addFields(field('Message mirror', info.mirror));
   if (info.memberCount) embed.addFields(field('Member count status', info.memberCount));
+  if (info.economy) embed.addFields(field('Economy tracker', info.economy));
   if (info.version) embed.setFooter({ text: `Version ${info.version} • Node ${process.version}` });
   return embed.setTimestamp(new Date());
 }
@@ -359,7 +360,64 @@ function profilePanelEmbed() {
     );
 }
 
+// ---------------------------------------------------------------------------------------
+// Economy tracker
+// ---------------------------------------------------------------------------------------
+const robux = (n) => (n == null ? 'Not set' : n.toLocaleString('en-US'));
+const signed = (p) => `${p >= 0 ? '+' : ''}${p.toFixed(1)}%`;
+
+function marketEmbed({ movers, newItems, max = 10, tracked }) {
+  const embed = new EmbedBuilder().setTitle('Limited market moves').setColor(0x00a2ff).setTimestamp(new Date());
+  const line = (m) => `${m.pct >= 0 ? '+' : '-'} [${trim(m.name, 45)}](https://www.rolimons.com/item/${m.id}): ${m.metric} ${robux(m.from)} to ${robux(m.to)} (${signed(m.pct)})`;
+  const gains = movers.filter((m) => m.pct > 0).slice(0, max);
+  const drops = movers.filter((m) => m.pct < 0).slice(0, max);
+  if (gains.length) embed.addFields(field('Rising', trim(gains.map(line).join('\n'), 1000)));
+  if (drops.length) embed.addFields(field('Falling', trim(drops.map(line).join('\n'), 1000)));
+  if (newItems.length) {
+    const rows = newItems.slice(0, max).map((i) => `[${trim(i.name, 45)}](https://www.rolimons.com/item/${i.id})${i.rap ? ` (RAP ${robux(i.rap)})` : ''}`);
+    embed.addFields(field(`New limiteds (${newItems.length})`, trim(rows.join('\n'), 1000)));
+  }
+  const extra = Math.max(0, movers.length - gains.length - drops.length);
+  const parts = ['Data: Rolimons'];
+  if (tracked) parts.push(`${tracked.toLocaleString('en-US')} items tracked`);
+  if (extra) parts.push(`${extra} more moves not shown`);
+  return embed.setFooter({ text: parts.join(' · ') });
+}
+
+function itemEmbed({ item, resale, history, imageUrl }) {
+  const { sparkline } = require('./lib/economy');
+  const embed = new EmbedBuilder()
+    .setTitle(trim(item.acronym ? `${item.name} (${item.acronym})` : item.name, 256))
+    .setURL(`https://www.rolimons.com/item/${item.id}`)
+    .setColor(0x00a2ff);
+  if (imageUrl) embed.setThumbnail(imageUrl);
+  const rap = resale && Number.isFinite(resale.recentAveragePrice) ? resale.recentAveragePrice : item.rap;
+  embed.addFields(
+    field('RAP', rap == null ? 'Unavailable' : robux(rap), true),
+    field('Value', robux(item.value), true),
+    field('Item ID', `\`${item.id}\``, true),
+  );
+  if (resale) {
+    const known = (v) => (Number.isFinite(v) ? v.toLocaleString('en-US') : 'Unavailable');
+    embed.addFields(
+      field('Original price', Number.isFinite(resale.originalPrice) ? robux(resale.originalPrice) : 'Unavailable', true),
+      field('Sales', known(resale.sales), true),
+      field('Stock', known(resale.assetStock), true),
+    );
+  }
+  if (history && history.prices.length >= 2) {
+    const first = history.prices[0];
+    const last = history.prices[history.prices.length - 1];
+    embed.addFields(
+      field(`Price, last ${history.prices.length} days`, `\`${sparkline(history.prices)}\`\n${robux(first)} to ${robux(last)}${history.change == null ? '' : ` (${signed(history.change)})`}`),
+    );
+  }
+  return embed.setFooter({ text: `Roblox${resale ? '' : ' (sales data unavailable)'} · Rolimons` });
+}
+
 module.exports = {
+  marketEmbed,
+  itemEmbed,
   profilePanelEmbed,
   healthEmbed,
   newsEmbed,

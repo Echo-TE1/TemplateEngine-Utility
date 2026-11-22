@@ -20,6 +20,7 @@ const { TempChannels } = require('./src/services/tempChannels');
 const { RobloxProfiles } = require('./src/services/robloxProfile');
 const { BadgeEmojis } = require('./src/services/badgeEmojis');
 const { ProfilePanel } = require('./src/services/profilePanel');
+const { EconomyTracker } = require('./src/services/economy');
 const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
 
@@ -91,6 +92,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   const tracker = new Tracker({ client, store, config, logChannels, serviceRoles, notifier });
   const health = config.healthEnabled ? new HealthMonitor({ store, config, notifier }) : null;
   const news = config.newsEnabled ? new NewsWatcher({ store, config, notifier }) : null;
+  const economy = config.economyEnabled ? new EconomyTracker({ store, config, notifier }) : null;
   const mirror = messageContent ? new MessageMirror({ store, logChannels, config }) : null;
   if (mirror) {
     await mirror.load();
@@ -98,7 +100,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, memberCount, reactionRoles, tempChannels, profiles, badgeEmojis, profilePanel, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, economy, mirror, memberCount, reactionRoles, tempChannels, profiles, badgeEmojis, profilePanel, mirrorIntentRefused, startedAt };
 
   // A startup step that can never crash or hang the bot: it is timed, logged and limited.
   const step = async (name, fn, ms = 20_000) => {
@@ -133,6 +135,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     if (memberCount) memberCount.start();
     if (health) await step('Health checks', () => health.start());
     if (news) await step('News', () => news.start());
+    if (economy) await step('Economy', () => economy.start());
 
     // Restore things that live in Discord, side by side: log roles, the profile panel and the reaction message.
     await Promise.all([
@@ -164,6 +167,18 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
       else await profile.handleModal(interaction, context);
     } catch (error) {
       console.error(`[Component Error] ${interaction.customId}: ${error.stack || error.message}`);
+    }
+  });
+
+  // Autocomplete (item names for /economy item).
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isAutocomplete || !interaction.isAutocomplete()) return;
+    try {
+      const command = commands.get(interaction.commandName);
+      if (command && command.autocomplete) await command.autocomplete(interaction, context);
+    } catch (error) {
+      console.error(`[Autocomplete Error] /${interaction.commandName}: ${error.message}`);
+      await interaction.respond([]).catch(() => {});
     }
   });
 
@@ -209,6 +224,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     if (memberCount) memberCount.stop();
     if (health) health.stop();
     if (news) news.stop();
+    if (economy) economy.stop();
     try {
       await store.close();
     } catch {

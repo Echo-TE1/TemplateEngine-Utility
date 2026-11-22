@@ -6,6 +6,7 @@ const LOG_TYPES = [
   { value: 'website_status', name: 'Website Status' },
   { value: 'api_status', name: 'API Status' },
   { value: 'game_updates', name: 'Roblox Updates' },
+  { value: 'economy_updates', name: 'Economy' },
   { value: 'bot_updates', name: 'Bot Updates' },
 ];
 
@@ -15,6 +16,7 @@ const LOG_DESCRIPTIONS = {
   website_status: 'Website outages: Roblox status "Website" + direct roblox.com checks',
   api_status: 'API / services outages: other Roblox services + direct API checks',
   game_updates: 'Roblox news: platform updates, events and announcements',
+  economy_updates: 'Limited market moves, new limiteds and Robux or marketplace news',
   bot_updates: 'Bot redeploy notices and mirrored messages',
 };
 

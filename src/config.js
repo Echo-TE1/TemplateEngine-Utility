@@ -98,6 +98,12 @@ const config = {
   newsPollMinutes: int('NEWS_POLL_MINUTES', 30, 5),
   newsFeeds: targets('NEWS_FEEDS', DEFAULT_NEWS_FEEDS),
 
+  // Economy tracker (limited item market from Rolimons + Robux related news).
+  economyEnabled: bool('ECONOMY_ENABLED', true),
+  economyPollMinutes: int('ECONOMY_POLL_MINUTES', 30, 10),
+  economy: { movePercent: int('ECONOMY_MOVE_PERCENT', 10, 1), minRap: int('ECONOMY_MIN_RAP', 1000, 0) },
+  economyKeywords: list('ECONOMY_KEYWORDS', ['robux', 'devex', 'developer exchange', 'marketplace', 'limited', 'limiteds', 'premium', 'creator store', 'price', 'pricing', 'resale', 'trading']),
+
   botAlertAfterMinutes: int('BOT_ALERT_AFTER_MINUTES', 10, 1),
 
   // Message mirror: copies this user's messages in this channel to the Bot Updates log.

@@ -16,10 +16,10 @@ function setup() {
   return { sent, client, dir, store: new JsonStore(dir, 50) };
 }
 
-test('offers the five log categories', () => {
+test('offers the six log categories', () => {
   assert.deepEqual(
     LOG_TYPES.map((t) => t.name),
-    ['Platform Status', 'Website Status', 'API Status', 'Roblox Updates', 'Bot Updates'],
+    ['Platform Status', 'Website Status', 'API Status', 'Roblox Updates', 'Economy', 'Bot Updates'],
   );
   assert.equal(labelFor('api_status'), 'API Status');
   assert.equal(labelFor('nope'), null);

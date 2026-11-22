@@ -10,6 +10,7 @@ const CUSTOM_NAMES = {
   website_status: 'website_status',
   api_status: 'api_status',
   game_updates: 'roblox_update',
+  economy_updates: 'economy_update',
   bot_updates: 'bot_update',
 };
 
@@ -19,6 +20,7 @@ const EMOJIS = {
   website_status: '\u{1F310}',
   api_status: '\u2699\uFE0F',
   game_updates: '\u{1F3AE}',
+  economy_updates: '\u{1F4B0}',
   bot_updates: '\u{1F916}',
 };
 

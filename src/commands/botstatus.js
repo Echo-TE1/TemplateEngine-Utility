@@ -7,7 +7,7 @@ const { LOG_TYPES } = require('../services/logChannels');
 const { duration, ts } = require('../lib/format');
 
 function collect(context, client) {
-  const { tracker, health, news, mirror, memberCount, mirrorIntentRefused, store, logChannels, config, startedAt } = context;
+  const { economy, tracker, health, news, mirror, memberCount, mirrorIntentRefused, store, logChannels, config, startedAt } = context;
   let problems = false;
 
   // Roblox status API (the main data source)
@@ -78,6 +78,18 @@ function collect(context, client) {
     }
   }
 
+  let economyText = null;
+  if (economy) {
+    if (economy.status.ok === false) {
+      problems = true;
+      economyText = `✕ ${economy.status.error}`;
+    } else if (economy.updatedAt) {
+      economyText = `✓ ${economy.items.size.toLocaleString('en-US')} items, updated ${ts(economy.updatedAt, 'R')}`;
+    } else {
+      economyText = '… Not checked yet';
+    }
+  }
+
   // Database
   let database = store.persistent
     ? `✓ ${store.kind} (saved permanently)`
@@ -104,6 +116,7 @@ function collect(context, client) {
     news: newsRows,
     mirror: mirrorText,
     memberCount: memberText,
+    economy: economyText,
     logs: `${setCount}/${LOG_TYPES.length} set up` + (setCount < LOG_TYPES.length ? ' (see /setup view)' : ''),
     version: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7),
   };

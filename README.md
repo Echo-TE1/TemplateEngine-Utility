@@ -103,6 +103,11 @@ Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on 
 | `NEWS_ENABLED` | `true` | Turn Roblox news on/off. |
 | `NEWS_POLL_MINUTES` | `30` | News check frequency (min 5). |
 | `NEWS_FEEDS` | Roblox Blog, DevForum Updates | `Name=https://feed-url,...` |
+| `ECONOMY_ENABLED` | `true` | Turn the economy tracker on/off. |
+| `ECONOMY_POLL_MINUTES` | `30` | How often the limited market is read (min 10). |
+| `ECONOMY_MOVE_PERCENT` | `10` | Smallest RAP/value change that counts as a move. |
+| `ECONOMY_MIN_RAP` | `1000` | Items cheaper than this are ignored. |
+| `ECONOMY_KEYWORDS` | robux, devex, marketplace, ... | News mentioning these words is also posted to the Economy log. |
 | `ROBLOX_COOKIE` | | Optional. Lets the profile lookup show online status. |
 | `MEMBER_COUNT_ENABLED` | `true` | Keep the bot's custom status showing a server's member count. |
 | `MEMBER_COUNT_GUILD_ID` | `1573644874077708438` | The server to count. |
@@ -167,3 +172,11 @@ cp .env.example .env   # fill in DISCORD_TOKEN, then run /setup log in Discord
 npm run dev            # needs Node 20.6+; or export the variables and run npm start
 npm test
 ```
+
+## Economy tracker
+
+Posts to the **Economy** log (`/setup log`) and answers `/economy item <name>` (RAP, value, original price, sales, stock and a 30 day price line, from Roblox's sales data) and `/economy movers`.
+
+- Every `ECONOMY_POLL_MINUTES` the bot reads Rolimons' public item list, compares it with the last read and posts items whose RAP or value moved by `ECONOMY_MOVE_PERCENT` or more, plus new limiteds. The first read is only a baseline. If a large part of the market "moves" at once it is treated as bad data and not announced.
+- Roblox news about Robux, DevEx, the marketplace and similar (see `ECONOMY_KEYWORDS`) is also copied to the Economy log.
+- Not available, so not shown: Robux/DevEx rates and Robux purchase prices (Roblox has no public API for them), and Rolimons' demand/trend ratings (their meaning is not documented).
