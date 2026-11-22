@@ -22,7 +22,7 @@ Needs: Manage Roles with the bot's role above the roles you pick, Add Reactions 
 ### Message mirror
 
 The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments). When the original is sent the bot reacts with ✅. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
-Needs: the **Message Content Intent** switched on in the Discord Developer Portal (Bot > Privileged Gateway Intents), and in the watched channel the bot needs View Channel, Read Message History and Add Reactions. If Discord refuses the intent the bot still starts, with the mirror off and a warning in Bot Updates and `/botstatus`. The copy links are saved (last 500), so edits and deletes still work after a restart. Change the channel/user with `MIRROR_CHANNEL_ID` / `MIRROR_USER_ID`, or turn it off with `MIRROR_ENABLED=false`.
+Needs: the **Message Content Intent** switched on in the Discord Developer Portal (Bot > Privileged Gateway Intents), and in the watched channel the bot needs View Channel, Read Message History and Add Reactions. If Discord refuses the intent the bot still starts, with the mirror off (`/botstatus` shows why). The copy links are saved (last 500), so edits and deletes still work after a restart. Change the channel/user with `MIRROR_CHANNEL_ID` / `MIRROR_USER_ID`, or turn it off with `MIRROR_ENABLED=false`.
 
 ## Commands
 
@@ -56,7 +56,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 4. In Discord, run `/setup log` for each log you want. Give the bot **View Channel, Send Messages, Embed Links, Read Message History** in those channels. Platform Status shows the live message right away.
 5. Optional: `/setup role` to ping a role per service. Pings only work if the role is mentionable or the bot has **Mention @everyone, @here and All Roles**.
 
-Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on redeploy (you would have to run `/setup log` again). The bot warns about this in Bot Updates.
+Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on redeploy (you would have to run `/setup log` again). `/botstatus` warns about this.
 
 ## Environment variables
 
