@@ -37,6 +37,7 @@ const FULL = {
   'GET followings/count': [200, { count: 12 }],
   'GET friends/count': [200, { count: 30 }],
   'GET roblox-badges': [200, [{ id: 1, name: 'Administrator', imageUrl: 'https://img/1.png' }]],
+  'GET collectibles': [200, { data: [{ recentAveragePrice: 100 }, { recentAveragePrice: null }, { recentAveragePrice: 250 }], nextPageCursor: null }],
   'GET rolimons': [200, { success: true, rap: 1000, value: 2500, rank: 42, privacy_enabled: false, last_online: 1700000000, stats_updated: 1700000100 }],
 };
 
@@ -184,4 +185,25 @@ test('a pasted profile link is used directly (no username lookup)', async () => 
   assert.equal(await p.resolveName('roblox.com/fr/users/123/profile'), '123');
   assert.equal(calls.length, 0);
   assert.equal(await p.resolveName('@Builder'), '7');
+});
+
+test('inventory RAP: sums pages, flags a cap, reports private inventories and failures', async () => {
+  const pages = (n) => (options, calls) => {
+    const index = calls.filter((c) => c.url.includes('collectibles')).length;
+    return [200, { data: [{ recentAveragePrice: 10 }, { recentAveragePrice: 5 }], nextPageCursor: index < n ? `c${index}` : null }];
+  };
+  const lookup = (routes) => new RobloxProfiles({ fetchImpl: fakeFetch({ ...FULL, ...routes }), log: quiet }).lookup('Builder');
+
+  const normal = await lookup({});
+  assert.deepEqual(normal.inventory, { private: false, rap: 350, items: 3, complete: true });
+
+  const paged = await lookup({ 'GET collectibles': pages(2) });
+  assert.deepEqual(paged.inventory, { private: false, rap: 30, items: 4, complete: true });
+
+  const capped = await lookup({ 'GET collectibles': pages(99) });
+  assert.equal(capped.inventory.complete, false);
+  assert.equal(capped.inventory.items, 10);
+
+  assert.equal((await lookup({ 'GET collectibles': [403, {}] })).inventory.private, true);
+  assert.equal((await lookup({ 'GET collectibles': [500, {}] })).inventory, null);
 });

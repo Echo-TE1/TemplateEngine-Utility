@@ -29,7 +29,8 @@ The panel is saved and re-posted if deleted, and its buttons keep working after 
 
 Where each value comes from, and when it says **Unavailable** (nothing is ever guessed):
 - **Roblox public APIs**: name, display name, verified, description, created date, ID, avatar, followers, following, Roblox badges.
-- **Rolimons** (`api.rolimons.com`, a community site): **RAP, value** and a "last online" time. Only for accounts Rolimons has data on (it needs tracked limited items; accounts without any show "No data on Rolimons"). Rolimons' last-online is when *it* last saw the account, so it is labelled "(Rolimons)" and can be old.
+- **Roblox inventory API**: **RAP**, the sum of the recent average price of the user's collectible items. It works for any public inventory (a private one shows "Private"), and reads up to 500 collectibles ("At least N" if there are more).
+- **Rolimons** (`api.rolimons.com`, a community site): **Value** (Rolimons' own item values, which Roblox does not provide) and a "last online" time. Only for accounts Rolimons has data on (it needs tracked limited items; accounts without any show "No data on Rolimons"). Rolimons' last-online is when *it* last saw the account, so it is labelled "(Rolimons)" and can be old.
 - **Online status**: Roblox hides this from logged-out requests, so it shows **Unavailable** unless you set `ROBLOX_COOKIE` (an optional `.ROBLOSECURITY` cookie, ideally from a throwaway account; it is only sent to Roblox and never logged or stored). Users with privacy settings still show Offline.
 - Invalid names, unknown accounts, rate limits and Roblox outages each get a clear private message. Results are cached for 30 seconds and each person can search or refresh once every 5 seconds, to stay under Roblox's rate limits.
 

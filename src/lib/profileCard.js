@@ -81,22 +81,23 @@ function profileCard(profile, emojis = {}) {
   const rolimonsUrl = `https://www.rolimons.com/player/${p.id}`;
   const link = (value) => (value == null ? NA : `[${num(value)}](${rolimonsUrl})`);
   lines.push(`**ID**: ${p.id}`);
-  // Rolimons only has RAP and value for accounts that own tracked limiteds.
-  const worth = (value) => {
-    if (!r) return NA;
-    if (r.private) return 'Private';
-    if (r.tracked === false || value == null) return 'No data on Rolimons';
-    return link(value);
-  };
-  lines.push(`**RAP**: ${worth(r && r.rap)}`);
-  lines.push(`**Value**: ${worth(r && r.value)}`);
+  // RAP comes from Roblox's own inventory data (any public inventory). Value comes from Rolimons.
+  const inv = p.inventory;
+  let rap;
+  if (inv && inv.private) rap = 'Private';
+  else if (inv) rap = `${inv.complete ? '' : 'At least '}${num(inv.rap)}`;
+  else rap = r && r.tracked !== false && r.rap != null ? link(r.rap) : NA; // inventory unreadable: fall back to Rolimons
+  let value = NA;
+  if (r) value = r.private ? 'Private' : r.tracked === false || r.value == null ? 'No data on Rolimons' : link(r.value);
+  lines.push(`**RAP**: ${rap}`);
+  lines.push(`**Value**: ${value}`);
 
   const body = text(trim(lines.join('\n'), 3500));
   const details = p.avatarUrl
     ? { type: 9, components: [body], accessory: { type: 11, media: { url: p.avatarUrl }, description: `${p.name}'s avatar` } }
     : body;
 
-  const sources = ['Roblox', r && r.tracked !== false ? 'Rolimons' : null].filter(Boolean).join(' · ');
+  const sources = ['Roblox', r && r.tracked !== false && r.value != null ? 'Rolimons' : null].filter(Boolean).join(' · ');
   const note = p.rateLimited ? ' · some data was rate limited, press Refresh later' : '';
   return wrap([text(heading), divider(), details, divider(), text(`-# ${sources}${note}`), buttons(p)]);
 }

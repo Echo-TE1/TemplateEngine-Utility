@@ -36,7 +36,7 @@ test('card is an ephemeral Components V2 container: heading, divider, details wi
   for (const line of ['**Following**: 67,852,811', '**Followers**: 69,898,106', '**Description**: Welcome to Roblox!', '**Badges (2)**: <:rb_1:11> <:rb_2:12>', '**ID**: 156']) {
     assert.ok(body.includes(line), line);
   }
-  assert.ok(body.includes('**RAP**: [13,838,430](https://www.rolimons.com/player/156)'));
+  assert.ok(body.includes('**RAP**: [13,838,430](https://www.rolimons.com/player/156)')); // no inventory data: Rolimons fallback
   assert.ok(body.includes('**Value**: [34,656,295](https://www.rolimons.com/player/156)'));
   assert.ok(body.includes('**Last Online**: <t:'));
 });
@@ -58,8 +58,9 @@ test('missing data says Unavailable (never invented); badges fall back to names;
 });
 
 test('private Rolimons inventories and a long description stay short and safe', () => {
-  const text = flat(profileCard({ ...base, description: 'x'.repeat(5000), rolimons: { private: true } }));
+  const text = flat(profileCard({ ...base, description: 'x'.repeat(5000), rolimons: { private: true }, inventory: { private: true } }));
   assert.ok(text.includes('**RAP**: Private'));
+  assert.ok(text.includes('**Value**: Private'));
   assert.ok(text.length < 4000);
   assert.equal(errorCard('User not found', 'No such user').components[0].type, 17);
 });
@@ -113,10 +114,18 @@ test('reply() sends the answer straight to the callback endpoint (update = type 
 
 test('untracked Rolimons accounts say so; online users show Online now; the Rolimons source is only credited when it has data', () => {
   const text = flat(profileCard({ ...base, rolimons: { tracked: false, private: false, rap: null, value: null, lastOnline: null }, badges: [], presence: { status: 'Online', online: true, lastOnline: null } }));
-  assert.ok(text.includes('**RAP**: No data on Rolimons'));
+  assert.ok(text.includes('**RAP**: Unavailable'));
   assert.ok(text.includes('**Value**: No data on Rolimons'));
   assert.ok(text.includes('**Last Online**: Online now'));
   assert.ok(text.includes('**Badges (0)**: None'));
   assert.ok(text.includes('-# Roblox'));
   assert.ok(!text.includes('Rolimons ·') && !text.includes('· Rolimons'));
+});
+
+test('RAP comes from the Roblox inventory: a number, "At least" when capped, Private when hidden', () => {
+  const rap = (inventory) => flat(profileCard({ ...base, inventory, rolimons: null }));
+  assert.ok(rap({ private: false, rap: 1234, items: 3, complete: true }).includes('**RAP**: 1,234'));
+  assert.ok(rap({ private: false, rap: 0, items: 0, complete: true }).includes('**RAP**: 0'));
+  assert.ok(rap({ private: false, rap: 99999, items: 500, complete: false }).includes('**RAP**: At least 99,999'));
+  assert.ok(rap({ private: true, rap: null }).includes('**RAP**: Private'));
 });

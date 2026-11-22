@@ -7,6 +7,7 @@ const PRESENCE = ['Offline', 'Online', 'In game', 'In Studio'];
 const CACHE_MS = 30_000;
 const NAME_CACHE_MS = 10 * 60_000;
 const MAX_CACHE = 200;
+const MAX_PAGES = 5; // 500 collectibles
 
 /** A lookup problem that is safe to show to the user. kind: invalid | notfound | ratelimited | error */
 class ProfileError extends Error {
@@ -90,7 +91,7 @@ class RobloxProfiles {
     const user = core.json;
 
     const flags = { rateLimited: false };
-    const [avatar, followers, following, friends, badges, rolimons, presence] = await Promise.all([
+    const [avatar, followers, following, friends, badges, rolimons, presence, inventory] = await Promise.all([
       this.#avatar(user.id, flags),
       this.#count(user.id, 'followers', flags),
       this.#count(user.id, 'followings', flags),
@@ -98,6 +99,7 @@ class RobloxProfiles {
       this.#badges(user.id, flags),
       this.#rolimons(user.id, flags),
       this.#presence(user.id, flags),
+      this.#collectibles(user.id, flags),
     ]);
 
     const profile = {
@@ -115,6 +117,7 @@ class RobloxProfiles {
       badges,
       rolimons,
       presence,
+      inventory,
       rateLimited: flags.rateLimited,
       fetchedAt: new Date(this.now()).toISOString(),
       url: `https://www.roblox.com/users/${user.id}/profile`,
@@ -173,7 +176,38 @@ class RobloxProfiles {
       .map((b) => ({ id: b.id, name: String(b.name), imageUrl: /^https:\/\//.test(b.imageUrl || '') ? b.imageUrl : null }));
   }
 
-  // RAP and item value come from Rolimons (Roblox has no public API for them). Null if not tracked there.
+  // RAP straight from Roblox: the sum of "recent average price" over the user's collectible (limited) items.
+  // Works for any public inventory. Reads at most MAX_PAGES x 100 items; `complete` says if that was all of them.
+  async #collectibles(id, flags) {
+    let rap = 0;
+    let items = 0;
+    let cursor = '';
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const url = `https://inventory.roblox.com/v1/users/${id}/assets/collectibles?limit=100&sortOrder=Asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      let response;
+      try {
+        response = await this.#json(url);
+      } catch (error) {
+        this.log.warn(`[Profile] collectibles failed: ${error.message}`);
+        return null;
+      }
+      if (response.status === 403) return { private: true, rap: null, items: null, complete: true };
+      if (response.status === 429) flags.rateLimited = true;
+      if (response.status !== 200 || !response.json || !Array.isArray(response.json.data)) {
+        this.log.warn(`[Profile] collectibles answered HTTP ${response.status}`);
+        return null;
+      }
+      for (const item of response.json.data) {
+        items += 1;
+        if (Number.isFinite(item.recentAveragePrice)) rap += item.recentAveragePrice;
+      }
+      cursor = response.json.nextPageCursor;
+      if (!cursor) return { private: false, rap, items, complete: true };
+    }
+    return { private: false, rap, items, complete: false };
+  }
+
+  // Item value comes from Rolimons (Roblox has no public API for them). Null if not tracked there.
   async #rolimons(id, flags) {
     const r = await this.#try(flags, `https://api.rolimons.com/players/v1/playerinfo/${id}`);
     const d = r && r.json;
