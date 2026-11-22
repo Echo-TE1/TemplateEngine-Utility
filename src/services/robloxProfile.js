@@ -154,7 +154,7 @@ class RobloxProfiles {
     if (!r || !Array.isArray(r.json)) return null;
     return r.json
       .filter((b) => b && b.name)
-      .map((b) => ({ name: String(b.name), imageUrl: /^https:\/\//.test(b.imageUrl || '') ? b.imageUrl : null }));
+      .map((b) => ({ id: b.id, name: String(b.name), imageUrl: /^https:\/\//.test(b.imageUrl || '') ? b.imageUrl : null }));
   }
 
   // RAP and item value come from Rolimons (Roblox has no public API for them). Null if not tracked there.
@@ -165,6 +165,7 @@ class RobloxProfiles {
     const num = (v) => (Number.isFinite(v) ? v : null);
     return {
       private: Boolean(d.privacy_enabled),
+      premium: Boolean(d.premium),
       rap: d.privacy_enabled ? null : num(d.rap),
       value: d.privacy_enabled ? null : num(d.value),
       rank: num(d.rank),

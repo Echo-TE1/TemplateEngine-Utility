@@ -18,6 +18,7 @@ const { editReply } = require('./src/lib/respond');
 const { MemberCountNote } = require('./src/services/memberCount');
 const { TempChannels } = require('./src/services/tempChannels');
 const { RobloxProfiles } = require('./src/services/robloxProfile');
+const { BadgeEmojis } = require('./src/services/badgeEmojis');
 const { ProfilePanel } = require('./src/services/profilePanel');
 const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
@@ -80,6 +81,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   const memberCount = config.memberCountEnabled ? new MemberCountNote({ client, guildId: config.memberCountGuildId }) : null;
   const tempChannels = new TempChannels({ client, store });
   await tempChannels.load();
+  const badgeEmojis = new BadgeEmojis({ client });
   const profiles = new RobloxProfiles({ cookie: config.robloxCookie });
   const profilePanel = new ProfilePanel({ store, client, buildPayload: () => commands.get('profile').panelPayload() });
   await profilePanel.load();
@@ -96,7 +98,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, memberCount, reactionRoles, tempChannels, profiles, profilePanel, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, memberCount, reactionRoles, tempChannels, profiles, badgeEmojis, profilePanel, mirrorIntentRefused, startedAt };
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);

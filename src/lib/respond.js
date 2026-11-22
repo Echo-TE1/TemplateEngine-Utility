@@ -58,6 +58,25 @@ async function editReply(interaction, payload, { fetchImpl = fetch, log = consol
 }
 
 /**
+ * The first answer to an interaction (a new message, or `update: true` to replace the message a button was on).
+ * Sent directly to Discord's callback endpoint, which also supports every message type; if that fails,
+ * discord.js's own reply/update is tried.
+ */
+async function reply(interaction, payload, { update = false, fetchImpl = fetch, log = console } = {}) {
+  const started = Date.now();
+  const name = interaction.commandName || interaction.customId || 'interaction';
+  try {
+    await raw('POST', `/interactions/${interaction.id}/${interaction.token}/callback`, { type: update ? 7 : 4, data: toBody(payload) }, { fetchImpl, timeoutMs: 2500 });
+    log.log(`[Reply] ${name} answered (direct) in ${Date.now() - started}ms`);
+    return;
+  } catch (error) {
+    log.warn(`[Reply] ${name} direct answer failed (${error.message}); trying discord.js`);
+  }
+  await withTimeout(update ? interaction.update(payload) : interaction.reply(payload), 2500, 'reply');
+  log.log(`[Reply] ${name} answered (discord.js) in ${Date.now() - started}ms`);
+}
+
+/**
  * Answers a slash command once its message is ready.
  *
  * build() must return the message payload and must never throw (turn problems into an error embed).
@@ -77,10 +96,11 @@ async function respondWhenReady(interaction, build, { quickMs = 2000, ephemeral 
   clearTimeout(timer);
 
   const flags = ephemeral ? EPHEMERAL : undefined;
+  const withFlags = (payload) => (flags ? { ...payload, flags: (payload.flags || 0) | flags } : payload);
 
   if (early) {
     trace(interaction, 'replying');
-    await interaction.reply(flags ? { ...early, flags } : early);
+    await reply(interaction, withFlags(early));
     trace(interaction, 'replied');
     return;
   }
@@ -94,4 +114,4 @@ async function respondWhenReady(interaction, build, { quickMs = 2000, ephemeral 
   trace(interaction, 'edited reply');
 }
 
-module.exports = { respondWhenReady, editReply, trace, withTimeout };
+module.exports = { respondWhenReady, editReply, reply, trace, withTimeout };

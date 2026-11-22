@@ -11,9 +11,10 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
-const { errorEmbed, successEmbed, profileEmbed, profilePanelEmbed } = require('../embeds');
+const { errorEmbed, successEmbed, profilePanelEmbed } = require('../embeds');
+const { profileCard, errorCard } = require('../lib/profileCard');
 const { ProfileError } = require('../services/robloxProfile');
-const { editReply, respondWhenReady } = require('../lib/respond');
+const { editReply, reply, respondWhenReady } = require('../lib/respond');
 
 const PREFIX = 'rp:';
 const SEARCH = `${PREFIX}search`;
@@ -46,20 +47,6 @@ function panelPayload() {
   };
 }
 
-// The result card: View Profile (link) + Refresh.
-function resultPayload(profile) {
-  return {
-    embeds: [profileEmbed(profile)],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel('View Profile').setStyle(ButtonStyle.Link).setURL(profile.url),
-        new ButtonBuilder().setCustomId(`${REFRESH}${profile.id}`).setLabel('Refresh').setStyle(ButtonStyle.Secondary),
-      ),
-    ],
-    allowedMentions: { parse: [] },
-  };
-}
-
 const TITLES = {
   invalid: 'Invalid username',
   notfound: 'User not found',
@@ -68,9 +55,9 @@ const TITLES = {
 };
 
 function problem(error) {
-  if (error instanceof ProfileError) return { embeds: [errorEmbed(TITLES[error.kind] || 'Lookup failed', error.message)], components: [] };
+  if (error instanceof ProfileError) return errorCard(TITLES[error.kind] || 'Lookup failed', error.message);
   console.error(`[Profile] ${error.stack || error.message}`);
-  return { embeds: [errorEmbed('Lookup failed', 'Something went wrong while looking that up. Please try again.')], components: [] };
+  return errorCard('Lookup failed', 'Something went wrong while looking that up. Please try again.');
 }
 
 // Runs a lookup but never takes longer than LOOKUP_TIMEOUT_MS, so the reply can never hang.
@@ -87,9 +74,10 @@ async function withTimeout(promise) {
 }
 
 // Runs a lookup and returns the message to show (the profile card or a friendly error). Never throws.
-async function lookupPayload(run) {
+async function lookupPayload(run, context) {
   try {
-    return resultPayload(await withTimeout(run()));
+    const profile = await withTimeout(run());
+    return profileCard(profile, await context.badgeEmojis.forProfile(profile));
   } catch (error) {
     return problem(error);
   }
@@ -177,12 +165,12 @@ module.exports = {
       if (wait) {
         return interaction.reply({ embeds: [errorEmbed('Slow down', `Please wait ${wait}s before refreshing again.`)], flags: MessageFlags.Ephemeral });
       }
-      // Fast path: if Roblox answers within 2.5s the card replaces the old one in a single step.
-      const work = lookupPayload(() => context.profiles.byId(id, { force: true }));
+      // Fast path: if Roblox answers within 1.8s the card replaces the old one in a single step.
+      const work = lookupPayload(() => context.profiles.byId(id, { force: true }), context);
       let timer;
-      const early = await Promise.race([work, new Promise((resolve) => { timer = setTimeout(() => resolve(null), 2500); })]);
+      const early = await Promise.race([work, new Promise((resolve) => { timer = setTimeout(() => resolve(null), 1800); })]);
       clearTimeout(timer);
-      if (early) return interaction.update(early);
+      if (early) return reply(interaction, early, { update: true }); // same message, new card
       await interaction.deferUpdate();
       return finish(interaction, await work);
     }
@@ -197,8 +185,8 @@ module.exports = {
     }
     // Fast path: reply in one step when Roblox answers quickly, otherwise "thinking..." then the result.
     const username = interaction.fields.getTextInputValue('username');
-    await respondWhenReady(interaction, () => lookupPayload(() => context.profiles.lookup(username)), {
-      quickMs: 2500,
+    await respondWhenReady(interaction, () => lookupPayload(() => context.profiles.lookup(username), context), {
+      quickMs: 1800,
       ephemeral: true,
     });
   },

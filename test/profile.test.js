@@ -55,7 +55,7 @@ test('a full lookup collects everything and never invents numbers', async () => 
   assert.equal(p.followers, 1500);
   assert.equal(p.following, 12);
   assert.equal(p.avatarUrl, 'https://tr.rbxcdn.com/a.png');
-  assert.deepEqual(p.badges, [{ name: 'Administrator', imageUrl: 'https://img/1.png' }]);
+  assert.deepEqual(p.badges, [{ id: 1, name: 'Administrator', imageUrl: 'https://img/1.png' }]);
   assert.equal(p.rolimons.rap, 1000);
   assert.equal(p.rolimons.value, 2500);
   assert.equal(p.rolimons.lastOnline, new Date(1700000000 * 1000).toISOString());

@@ -22,11 +22,13 @@ Nothing is posted to a log until you set its channel.
 
 ### Roblox profile lookup
 
-`/profile tracker panel channel:#channel` posts a permanent panel with a **Search Roblox User** button. Anyone can press it; a pop-up asks for **one thing only, the Roblox username**. The result is a private (ephemeral) profile card with the avatar on the right: username, display name, Verified, followers / following / friends, description, Roblox badges (each name links to its icon), created date, user ID, status, last online, RAP, value, and **View Profile** and **Refresh** buttons.
+`/profile tracker panel channel:#channel` posts a permanent panel with a **Search Roblox User** button. Anyone can press it; a pop-up asks for **one thing only, the Roblox username**. The result is a private (ephemeral) card: the username as a link (with a verified mark), a divider, then following, followers, description, **badges as inline icons**, created date, last online, ID, RAP and value (both link to Rolimons), the avatar on the right, and **View Profile** and **Refresh** buttons. The card uses Discord's container components, so it needs discord.js 14.19 or newer (`package.json` asks for it).
 The panel is saved and re-posted if deleted, and its buttons keep working after redeploys.
 
+**Badge icons** are uploaded once as the bot's own emoji (named `rb_<badge id>`, they show in any server) and reused. If an upload fails the badge shows as text. You can also upload emoji named `verified` and `premium` to the bot (Developer Portal > your app > Emoji) to replace the plain check mark and show a Premium icon.
+
 Where each value comes from, and when it says **Unavailable** (nothing is ever guessed):
-- **Roblox public APIs**: name, display name, verified, description, created date, ID, avatar, followers / following / friends, Roblox badges.
+- **Roblox public APIs**: name, display name, verified, description, created date, ID, avatar, followers, following, Roblox badges.
 - **Rolimons** (`api.rolimons.com`, a community site): **RAP, value** and a "last online" time. Only for accounts Rolimons tracks with a public inventory. Rolimons' last-online is when *it* last saw the account, so it is labelled "(Rolimons)" and can be old.
 - **Online status**: Roblox hides this from logged-out requests, so it shows **Unavailable** unless you set `ROBLOX_COOKIE` (an optional `.ROBLOSECURITY` cookie, ideally from a throwaway account; it is only sent to Roblox and never logged or stored). Users with privacy settings still show Offline.
 - Invalid names, unknown accounts, rate limits and Roblox outages each get a clear private message. Results are cached for 30 seconds and each person can search or refresh once every 5 seconds, to stay under Roblox's rate limits.
@@ -141,6 +143,7 @@ src/services/health.js        direct checks of roblox.com and the APIs
 src/services/news.js          Roblox news feeds
 src/services/reactionRoles.js reaction roles + DM subscribers
 src/services/robloxProfile.js  Roblox profile lookup (Roblox APIs + Rolimons)
+src/services/badgeEmojis.js    badge icons as bot emoji
 src/services/profilePanel.js   the permanent Search Roblox User panel
 src/services/tempChannels.js  temporary channels from /channel create
 src/services/memberCount.js    bot custom status = member count
@@ -149,7 +152,7 @@ src/services/notifier.js      posts to the log channels (with retry)
 src/services/logChannels.js   which channel each log uses
 src/services/serviceRoles.js  which role is pinged per service
 src/services/store.js         MongoDB / JSON storage
-src/lib/                      pure logic (unit tested): diff, normalize, health, feed, stats, ...
+src/lib/                      pure logic (unit tested): diff, normalize, health, feed, stats, profileCard, ...
 src/embeds.js                 all embeds
 test/                         npm test
 ```
