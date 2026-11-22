@@ -2,12 +2,13 @@
 
 const { startLoop } = require('../lib/loop');
 
-const MAX_ABOUT = 400; // Discord's limit for the bot's "About Me"
+const CUSTOM_STATUS = 4; // Discord activity type for a custom status
+const MAX_STATE = 128; // Discord's limit for a custom status
 
 /**
- * Keeps the bot's "About Me" (its profile note) showing how many members a server has.
- * Uses plain REST calls, so no privileged intent is needed. It only edits when the number changed,
- * and checks every few minutes, because Discord rate limits profile edits.
+ * Keeps the bot's custom status (the note bubble next to its avatar) showing how many members a server has.
+ * The count is read with one REST call, so no privileged intent is needed. The status is only changed
+ * when the number changed, and checked every few minutes.
  */
 class MemberCountNote {
   constructor({ client, guildId, everyMs = 10 * 60_000, log = console }) {
@@ -18,7 +19,7 @@ class MemberCountNote {
   }
 
   static text(count) {
-    return `Watching over ${count.toLocaleString('en-US')} members`.slice(0, MAX_ABOUT);
+    return `${count.toLocaleString('en-US')} members`.slice(0, MAX_STATE);
   }
 
   async #count() {
@@ -38,11 +39,11 @@ class MemberCountNote {
         this.stats.error = null;
         return false;
       }
-      await this.client.rest.patch('/applications/@me', { body: { description: text } });
+      this.client.user.setPresence({ status: 'online', activities: [{ type: CUSTOM_STATUS, name: 'Custom Status', state: text }] });
       this.lastText = text;
       this.stats.updatedAt = new Date().toISOString();
       this.stats.error = null;
-      this.log.log(`[MemberCount] Bot note set to "${text}"`);
+      this.log.log(`[MemberCount] Bot status set to "${text}"`);
       return true;
     } catch (error) {
       const hint = error.status === 404 || error.code === 10004 || error.code === 50001 ? ' (is the bot in that server?)' : '';

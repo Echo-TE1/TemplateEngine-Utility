@@ -103,7 +103,7 @@ const config = {
   mirrorChannelId: str('MIRROR_CHANNEL_ID', '1573743378368176148'),
   mirrorUserId: str('MIRROR_USER_ID', '1219266886143967245'),
 
-  // The bot's "About Me" shows this server's member count.
+  // The bot's custom status shows this server's member count.
   memberCountEnabled: bool('MEMBER_COUNT_ENABLED', true),
   memberCountGuildId: str('MEMBER_COUNT_GUILD_ID', '1573644874077708438'),
 
