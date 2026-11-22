@@ -46,7 +46,7 @@ module.exports = {
         } catch {
           // sales data is optional; the card says when it is missing
         }
-        const [imageUrl] = await Promise.all([economy.thumbnail(item.id)]);
+        const imageUrl = await economy.thumbnail(item.id);
         return { embeds: [itemEmbed({ item, resale, history: resale ? economy.history(resale) : null, imageUrl })] };
       } catch (error) {
         console.error(`[Cmd] /economy ${sub} failed: ${error.stack || error.message}`);

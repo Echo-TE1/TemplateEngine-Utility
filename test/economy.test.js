@@ -57,3 +57,28 @@ test('sparkline and keywords and history', () => {
   assert.equal(h.change, 20);
   assert.deepEqual(priceHistory(null), { prices: [], change: null });
 });
+
+let hasDiscord = true;
+try { require.resolve('discord.js'); } catch { hasDiscord = false; }
+
+test('EconomyTracker: baseline is silent, later moves are posted once, bad answers are survived', { skip: !hasDiscord && 'discord.js not installed' }, async () => {
+  const { EconomyTracker } = require('../src/services/economy');
+  const store = (() => { const d = {}; return { getDoc: async (k) => d[k], setDoc: async (k, v) => { d[k] = v; } }; })();
+  let body = make(150);
+  const fetchImpl = async () => ({ status: 200, headers: { get: () => null }, json: async () => body });
+  const posts = [];
+  const log = { log() {}, warn() {}, error() {} };
+  const t = new EconomyTracker({ store, config: { economy: { movePercent: 10, minRap: 1000 }, economyPollMinutes: 30 }, notifier: { post: async (...a) => posts.push(a) }, fetchImpl, log });
+  await t.runOnce();
+  assert.equal(posts.length, 0);
+  body = make(150, { 1: ['Item 1', '', 8000, 6000] });
+  await t.runOnce();
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0][0], 'economy_updates');
+  await t.runOnce();
+  assert.equal(posts.length, 1); // same data: nothing new
+  body = { success: false };
+  await t.runOnce();
+  assert.equal(t.status.ok, false);
+  assert.equal(t.items.size, 150); // old data kept
+});

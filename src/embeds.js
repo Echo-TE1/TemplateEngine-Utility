@@ -363,18 +363,19 @@ function profilePanelEmbed() {
 // ---------------------------------------------------------------------------------------
 // Economy tracker
 // ---------------------------------------------------------------------------------------
+const linkText = (s) => String(s).replace(/[\[\]()`*_~|>]/g, '');
 const robux = (n) => (n == null ? 'Not set' : n.toLocaleString('en-US'));
 const signed = (p) => `${p >= 0 ? '+' : ''}${p.toFixed(1)}%`;
 
 function marketEmbed({ movers, newItems, max = 10, tracked }) {
   const embed = new EmbedBuilder().setTitle('Limited market moves').setColor(0x00a2ff).setTimestamp(new Date());
-  const line = (m) => `${m.pct >= 0 ? '+' : '-'} [${trim(m.name, 45)}](https://www.rolimons.com/item/${m.id}): ${m.metric} ${robux(m.from)} to ${robux(m.to)} (${signed(m.pct)})`;
+  const line = (m) => `${m.pct >= 0 ? '+' : '-'} [${trim(linkText(m.name), 45)}](https://www.rolimons.com/item/${m.id}): ${m.metric} ${robux(m.from)} to ${robux(m.to)} (${signed(m.pct)})`;
   const gains = movers.filter((m) => m.pct > 0).slice(0, max);
   const drops = movers.filter((m) => m.pct < 0).slice(0, max);
   if (gains.length) embed.addFields(field('Rising', trim(gains.map(line).join('\n'), 1000)));
   if (drops.length) embed.addFields(field('Falling', trim(drops.map(line).join('\n'), 1000)));
   if (newItems.length) {
-    const rows = newItems.slice(0, max).map((i) => `[${trim(i.name, 45)}](https://www.rolimons.com/item/${i.id})${i.rap ? ` (RAP ${robux(i.rap)})` : ''}`);
+    const rows = newItems.slice(0, max).map((i) => `[${trim(linkText(i.name), 45)}](https://www.rolimons.com/item/${i.id})${i.rap ? ` (RAP ${robux(i.rap)})` : ''}`);
     embed.addFields(field(`New limiteds (${newItems.length})`, trim(rows.join('\n'), 1000)));
   }
   const extra = Math.max(0, movers.length - gains.length - drops.length);
