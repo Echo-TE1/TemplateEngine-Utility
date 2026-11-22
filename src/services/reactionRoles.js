@@ -293,35 +293,16 @@ class ReactionRoles {
     const type = this.logForEmoji(reaction.emoji);
     if (!type) return;
 
-    const label = labelFor(type);
+    // No DM here: people are only messaged when something is posted to the log they chose.
     await this.subscribe(type, user.id);
-    const notes = [];
     const roleId = this.roleFor(type);
     if (roleId) {
       try {
         const member = await this.#member(reaction, user);
         if (member) await member.roles.add(roleId, 'Reaction role');
       } catch (error) {
-        this.log.warn(`[ReactionRoles] could not give role ${roleId} to ${user.id}: ${error.message}`);
-        notes.push('I could not give you the role (the bot needs Manage Roles and its role must be above it).');
+        this.log.warn(`[ReactionRoles] could not give role ${roleId} to ${user.id}: ${error.message} (the bot needs Manage Roles and its role must be above it)`);
       }
-    }
-    try {
-      await user.send({
-        content: `<@${user.id}>`,
-        embeds: [
-          {
-            color: 0x57f287,
-            title: `Subscribed to ${label}`,
-            description:
-              `I will DM you when something is posted to **${label}**.\nRemove your reaction to stop.` +
-              (notes.length ? `\n\n${notes.map((n) => `! ${n}`).join('\n')}` : ''),
-          },
-        ],
-        allowedMentions: { users: [user.id] },
-      });
-    } catch {
-      this.log.warn(`[ReactionRoles] ${user.id} has DMs closed; they are subscribed but cannot receive DMs.`);
     }
   }
 

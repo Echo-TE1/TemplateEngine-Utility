@@ -27,7 +27,7 @@ function world() {
   return { dms, roles, user, client, reaction };
 }
 
-test('reacting subscribes, gives the role and DMs a confirmation; removing undoes it', async () => {
+test('reacting subscribes and gives the role without sending a DM; removing undoes it', async () => {
   const w = world();
   const rr = new ReactionRoles({ store: tmp(), client: w.client, log: quiet });
   await rr.setRole('game_updates', 'roleG');
@@ -36,8 +36,7 @@ test('reacting subscribes, gives the role and DMs a confirmation; removing undoe
   await rr.handleAdd(w.reaction(EMOJIS.game_updates), u);
   assert.deepEqual(rr.subscribers('game_updates'), ['u1']);
   assert.ok(w.roles.has('roleG'));
-  assert.equal(w.dms.length, 1);
-  assert.match(w.dms[0].p.content, /<@u1>/);
+  assert.equal(w.dms.length, 0); // reacting sends no DM
 
   await rr.handleRemove(w.reaction(EMOJIS.game_updates), u);
   assert.deepEqual(rr.subscribers('game_updates'), []);
@@ -65,7 +64,7 @@ test('a role failure still subscribes the user', async () => {
   r.message.guild.members.fetch = async () => { throw new Error('Missing Permissions'); };
   await rr.handleAdd(r, w.user('u'));
   assert.deepEqual(rr.subscribers('website_status'), ['u']);
-  assert.match(w.dms[0].p.embeds[0].description, /could not give you the role/);
+  assert.equal(w.dms.length, 0);
 });
 
 test('dm() sends embeds to subscribers of that log only, skips files and closed DMs', async () => {
