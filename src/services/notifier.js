@@ -10,8 +10,9 @@ const MAX_QUEUE = 50;
  * permission) is retried a few times in the background, then dropped with a log line.
  */
 class Notifier {
-  constructor({ logChannels, log = console, retryEveryMs = 60_000 }) {
+  constructor({ logChannels, subscribers = null, log = console, retryEveryMs = 60_000 }) {
     this.logChannels = logChannels;
+    this.subscribers = subscribers; // optional: anything with dm(type, payload)
     this.log = log;
     this.retryEveryMs = retryEveryMs;
     this.queue = [];
@@ -44,6 +45,10 @@ class Notifier {
   async #attempt(item) {
     try {
       await this.logChannels.send(item.type, item.payload);
+      if (this.subscribers) {
+        // Private copies for people who reacted for this log. Never blocks or fails the channel post.
+        this.subscribers.dm(item.type, item.payload).catch((e) => this.log.warn(`[Notifier] DM failed: ${e.message}`));
+      }
       return true;
     } catch (error) {
       item.attempts += 1;

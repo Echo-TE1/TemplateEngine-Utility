@@ -14,6 +14,11 @@ A small Node.js / discord.js bot that watches Roblox and tells your server when 
 
 Nothing is posted to a log until you set its channel.
 
+### Reaction roles and private alerts
+
+`/reactionrole set` (owner) opens a private panel with one role picker per log. `/reactionrole post channel_id:<id>` posts the reaction message (📡 Platform Status, 🌐 Website Status, ⚙️ API Status, 🎮 Game Updates, 🤖 Bot Updates). When someone reacts they get that log's role (if you picked one) and the bot **DMs them, mentioning them, whenever something is posted to that log** (new alerts, updates, recoveries, news). Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
+Needs: Manage Roles with the bot's role above the roles you pick, Add Reactions in the channel, and people must have DMs from server members open. The daily backup file is never DMed, and the live status message edits are not DMed (only new posts). Re-run `/reactionrole post` after changing roles to refresh the text; the old message stops working.
+
 ### Message mirror
 
 The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments, link to the original). When the original is sent the bot reacts with ✅. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
@@ -28,6 +33,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 | `/setup view` | owner | Show which channel each log uses and the alert roles. |
 | `/setup clear action` | owner | Stop posting a log. |
 | `/setup role service [role]` | owner | Role pinged for incidents on a service (or "All alerts"). Leave `role` empty to remove it. |
+| `/reactionrole set` / `post` | owner | Choose a role per log, then post the reaction message that subscribes people to DMs. |
 | `/botstatus` | owner | Uptime, Discord ping, database, last good Roblox check, direct checks, news feeds, logs set up. |
 | `/backup` | owner | Download everything the bot remembers as a JSON file (no tokens or secrets in it). |
 
@@ -115,6 +121,7 @@ src/services/tracker.js       status polling, alerts, live message, routing to l
 src/services/health.js        direct checks of roblox.com and the APIs
 src/services/news.js          Roblox news feeds
 src/services/backup.js        /backup and the daily backup
+src/services/reactionRoles.js reaction roles + DM subscribers
 src/services/mirror.js        message mirror (copy / edit / delete to Bot Updates)
 src/services/notifier.js      posts to the log channels (with retry)
 src/services/logChannels.js   which channel each log uses

@@ -14,6 +14,7 @@ const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { BackupScheduler } = require('./src/services/backup');
+const { ReactionRoles } = require('./src/services/reactionRoles');
 const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
 
@@ -57,11 +58,11 @@ async function main() {
 }
 
 async function boot({ messageContent, mirrorIntentRefused = false }) {
-  const intents = [GatewayIntentBits.Guilds];
+  const intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions];
   if (messageContent) intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent);
   const client = new Client({
     intents,
-    partials: messageContent ? [Partials.Message, Partials.Channel] : [],
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
   });
   const commands = loadCommands();
   const store = await createStore(config);
@@ -69,7 +70,9 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   await logChannels.load();
   const serviceRoles = new ServiceRoles({ store, fallbackRoleId: config.alertRoleId });
   await serviceRoles.load();
-  const notifier = new Notifier({ logChannels });
+  const reactionRoles = new ReactionRoles({ store, client });
+  await reactionRoles.load();
+  const notifier = new Notifier({ logChannels, subscribers: reactionRoles });
   const tracker = new Tracker({ client, store, config, logChannels, serviceRoles, notifier });
   const health = config.healthEnabled ? new HealthMonitor({ store, config, notifier }) : null;
   const news = config.newsEnabled ? new NewsWatcher({ store, config, notifier }) : null;
@@ -81,7 +84,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, reactionRoles, mirrorIntentRefused, startedAt };
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
@@ -119,6 +122,22 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
         ),
       ],
     });
+  });
+
+  client.on(Events.MessageReactionAdd, (reaction, user) =>
+    reactionRoles.handleAdd(reaction, user).catch((e) => console.error(`[ReactionRoles] add failed: ${e.message}`)));
+  client.on(Events.MessageReactionRemove, (reaction, user) =>
+    reactionRoles.handleRemove(reaction, user).catch((e) => console.error(`[ReactionRoles] remove failed: ${e.message}`)));
+
+  // Role pickers from /reactionrole set.
+  client.on(Events.InteractionCreate, async (interaction) => {
+    if (!interaction.isRoleSelectMenu || !interaction.isRoleSelectMenu()) return;
+    if (!interaction.customId.startsWith('rr:')) return;
+    try {
+      await commands.get('reactionrole').handleComponent(interaction, context);
+    } catch (error) {
+      console.error(`[Component Error] ${interaction.customId}: ${error.stack || error.message}`);
+    }
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
