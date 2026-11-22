@@ -17,7 +17,7 @@ const DEFAULT_HEALTH_TARGETS = [
   { name: 'Games API', url: 'https://games.roblox.com/v1/games?universeIds=1' },
 ];
 
-// Roblox-wide news for the Game Updates log (platform updates, events, announcements).
+// Roblox-wide news for the Roblox Updates log (platform updates, events, announcements).
 // These are the standard feed paths of the Roblox blog (WordPress) and the DevForum Updates
 // category (Discourse); override them with NEWS_FEEDS if either has moved.
 const DEFAULT_NEWS_FEEDS = [
@@ -91,7 +91,7 @@ const config = {
   healthTimeoutSeconds: int('HEALTH_TIMEOUT_SECONDS', 8, 2),
   healthTargets: targets('HEALTH_TARGETS', DEFAULT_HEALTH_TARGETS),
 
-  // Roblox news (Game Updates log).
+  // Roblox news (Roblox Updates log).
   newsEnabled: bool('NEWS_ENABLED', true),
   newsPollMinutes: int('NEWS_POLL_MINUTES', 30, 5),
   newsFeeds: targets('NEWS_FEEDS', DEFAULT_NEWS_FEEDS),

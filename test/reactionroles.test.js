@@ -124,7 +124,7 @@ test('ensureRoles creates a role per log, reuses by name, recreates deleted ones
   assert.deepEqual(await rr.ensureRoles(logChannels, {}), []);
 
   roles.delete(rr.roleFor('game_updates')); // someone deleted it
-  assert.deepEqual(await rr.ensureRoles(logChannels, {}), ['Game Updates Alerts']);
+  assert.deepEqual(await rr.ensureRoles(logChannels, {}), ['Roblox Updates Alerts']);
 });
 
 test('ensureRoles does nothing (and does not throw) when no server is known yet', async () => {

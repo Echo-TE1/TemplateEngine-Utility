@@ -9,7 +9,7 @@ const safeKey = (s) => String(s).replace(/[.$]/g, '_');
 
 /**
  * Watches Roblox's own news feeds (platform updates, events, announcements) and posts new items to
- * the Game Updates log. Cheap by design: conditional requests (an unchanged feed costs a tiny
+ * the Roblox Updates log. Cheap by design: conditional requests (an unchanged feed costs a tiny
  * "not modified" answer), only the first ~150 KB of a feed is read, and the first read of a feed
  * only remembers what is already there instead of flooding the channel.
  */

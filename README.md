@@ -9,7 +9,7 @@ A small Node.js / discord.js bot that watches Roblox and tells your server when 
 | **Platform Status** | One live status message that is edited in place, plus an alert when an incident starts, is updated or resolves (updates reply to the original alert). Role pings go here. |
 | **Website Status** | Website incidents and changes from Roblox's status page, plus our own direct check of `roblox.com`. |
 | **API Status** | Incidents and changes for every other Roblox service, plus direct checks of the login, users and games APIs. |
-| **Game Updates** | Roblox-wide news: platform updates, events and announcements (Roblox Blog and DevForum Updates feeds). |
+| **Roblox Updates** | Roblox-wide news: platform updates, events and announcements (Roblox Blog and DevForum Updates feeds). |
 | **Bot Updates** | Only two things: a "Bot redeployed" notice each time the bot starts, and the message mirror (below). |
 
 Nothing is posted to a log until you set its channel.

@@ -5,7 +5,7 @@ const LOG_TYPES = [
   { value: 'platform_status', name: 'Platform Status' },
   { value: 'website_status', name: 'Website Status' },
   { value: 'api_status', name: 'API Status' },
-  { value: 'game_updates', name: 'Game Updates' },
+  { value: 'game_updates', name: 'Roblox Updates' },
   { value: 'bot_updates', name: 'Bot Updates' },
 ];
 

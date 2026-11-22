@@ -19,7 +19,7 @@ function setup() {
 test('offers the five log categories', () => {
   assert.deepEqual(
     LOG_TYPES.map((t) => t.name),
-    ['Platform Status', 'Website Status', 'API Status', 'Game Updates', 'Bot Updates'],
+    ['Platform Status', 'Website Status', 'API Status', 'Roblox Updates', 'Bot Updates'],
   );
   assert.equal(labelFor('api_status'), 'API Status');
   assert.equal(labelFor('nope'), null);
