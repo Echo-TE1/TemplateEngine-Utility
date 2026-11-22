@@ -156,3 +156,22 @@ test('ProfilePanel: posts, replaces the old panel, restores after a redeploy, re
   assert.equal(await again.ensure(), 'reposted');
   assert.equal(messages.size, 1);
 });
+
+test('Rolimons "success" with empty stats is not tracked; badge API 400 for ids above int32 means none', async () => {
+  const routes = {
+    ...FULL,
+    'POST usernames/users': [200, { data: [{ id: 2218528592, name: 'New' }] }],
+    'GET /v1/users/2218528592': [200, { id: 2218528592, name: 'New', displayName: 'New', created: '2020-12-16T00:00:00Z' }],
+    'GET 2218528592/roblox-badges': [400, {}],
+    'GET playerinfo/2218528592': [200, { success: true, rap: null, value: null, rank: null, last_online: 0 }],
+  };
+  const p = await new RobloxProfiles({ fetchImpl: fakeFetch(routes), log: quiet }).lookup('New');
+  assert.deepEqual(p.badges, []);
+  assert.equal(p.rolimons.tracked, false);
+  assert.equal(p.rolimons.rap, null);
+  assert.equal(p.rolimons.lastOnline, null);
+
+  // A 400 for a normal id is still "unavailable", not "none".
+  const normal = await new RobloxProfiles({ fetchImpl: fakeFetch({ ...FULL, 'GET roblox-badges': [400, {}] }), log: quiet }).lookup('Builder');
+  assert.equal(normal.badges, null);
+});

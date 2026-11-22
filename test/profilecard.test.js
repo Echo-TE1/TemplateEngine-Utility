@@ -110,3 +110,13 @@ test('reply() sends the answer straight to the callback endpoint (update = type 
   await reply({ ...i, reply: async () => { used = true; } }, { content: 'x' }, { fetchImpl: async () => { throw new Error('x'); }, log: quiet });
   assert.equal(used, true);
 });
+
+test('untracked Rolimons accounts say so; online users show Online now; the Rolimons source is only credited when it has data', () => {
+  const text = flat(profileCard({ ...base, rolimons: { tracked: false, private: false, rap: null, value: null, lastOnline: null }, badges: [], presence: { status: 'Online', online: true, lastOnline: null } }));
+  assert.ok(text.includes('**RAP**: No data on Rolimons'));
+  assert.ok(text.includes('**Value**: No data on Rolimons'));
+  assert.ok(text.includes('**Last Online**: Online now'));
+  assert.ok(text.includes('**Badges (0)**: None'));
+  assert.ok(text.includes('-# Roblox'));
+  assert.ok(!text.includes('Rolimons ·') && !text.includes('· Rolimons'));
+});

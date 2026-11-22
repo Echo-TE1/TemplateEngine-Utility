@@ -73,6 +73,7 @@ function profileCard(profile, emojis = {}) {
   if (p.presence) lines.push(`**Status**: ${p.presence.status}`);
   let last = NA;
   if (p.presence && p.presence.lastOnline) last = ts(p.presence.lastOnline, 'D');
+  else if (p.presence && p.presence.online) last = 'Online now';
   else if (r && r.lastOnline) last = ts(r.lastOnline, 'D');
   lines.push(`**Last Online**: ${last}`);
   lines.push('');
@@ -80,15 +81,22 @@ function profileCard(profile, emojis = {}) {
   const rolimonsUrl = `https://www.rolimons.com/player/${p.id}`;
   const link = (value) => (value == null ? NA : `[${num(value)}](${rolimonsUrl})`);
   lines.push(`**ID**: ${p.id}`);
-  lines.push(`**RAP**: ${r ? (r.private ? 'Private' : link(r.rap)) : NA}`);
-  lines.push(`**Value**: ${r ? (r.private ? 'Private' : link(r.value)) : NA}`);
+  // Rolimons only has RAP and value for accounts that own tracked limiteds.
+  const worth = (value) => {
+    if (!r) return NA;
+    if (r.private) return 'Private';
+    if (r.tracked === false || value == null) return 'No data on Rolimons';
+    return link(value);
+  };
+  lines.push(`**RAP**: ${worth(r && r.rap)}`);
+  lines.push(`**Value**: ${worth(r && r.value)}`);
 
   const body = text(trim(lines.join('\n'), 3500));
   const details = p.avatarUrl
     ? { type: 9, components: [body], accessory: { type: 11, media: { url: p.avatarUrl }, description: `${p.name}'s avatar` } }
     : body;
 
-  const sources = ['Roblox', r ? 'Rolimons' : null].filter(Boolean).join(' · ');
+  const sources = ['Roblox', r && r.tracked !== false ? 'Rolimons' : null].filter(Boolean).join(' · ');
   const note = p.rateLimited ? ' · some data was rate limited, press Refresh later' : '';
   return wrap([text(heading), divider(), details, divider(), text(`-# ${sources}${note}`), buttons(p)]);
 }

@@ -130,6 +130,7 @@ class RobloxProfiles {
     try {
       const response = await this.#json(url, options);
       if (response.status === 429) flags.rateLimited = true;
+      if (response.status !== 200) this.log.warn(`[Profile] ${url.split('?')[0]} answered HTTP ${response.status}`);
       return response.status === 200 ? response : null;
     } catch (error) {
       this.log.warn(`[Profile] ${url.split('?')[0]} failed: ${error.message}`);
@@ -149,8 +150,20 @@ class RobloxProfiles {
   }
 
   // Roblox's own account badges (Administrator, Veteran, ...), not game badges.
+  // Roblox's badge API rejects user ids above 2,147,483,647 (HTTP 400). Those accounts are newer than every
+  // one of these badges, so they have none; that case is shown as "None" instead of "Unavailable".
   async #badges(id, flags) {
-    const r = await this.#try(flags, `https://accountinformation.roblox.com/v1/users/${id}/roblox-badges`);
+    const url = `https://accountinformation.roblox.com/v1/users/${id}/roblox-badges`;
+    let r = null;
+    try {
+      const response = await this.#json(url);
+      if (response.status === 429) flags.rateLimited = true;
+      if (response.status === 400 && Number(id) > 2147483647) return [];
+      if (response.status !== 200) this.log.warn(`[Profile] ${url} answered HTTP ${response.status}`);
+      r = response.status === 200 ? response : null;
+    } catch (error) {
+      this.log.warn(`[Profile] ${url} failed: ${error.message}`);
+    }
     if (!r || !Array.isArray(r.json)) return null;
     return r.json
       .filter((b) => b && b.name)
@@ -164,6 +177,8 @@ class RobloxProfiles {
     if (!d || d.success !== true) return null;
     const num = (v) => (Number.isFinite(v) ? v : null);
     return {
+      // Rolimons answers "success" with all-empty stats for accounts it has no data on (e.g. no limiteds).
+      tracked: Number.isFinite(d.rap) || Number.isFinite(d.value) || Number.isFinite(d.rank),
       private: Boolean(d.privacy_enabled),
       premium: Boolean(d.premium),
       rap: d.privacy_enabled ? null : num(d.rap),
