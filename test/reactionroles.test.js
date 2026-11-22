@@ -179,3 +179,24 @@ test('ensureMessage: a deleted message is posted again; nothing saved or unreach
   await lost.setMessage('NOPE', 'M');
   assert.equal(await lost.ensureMessage(), 'missing-channel');
 });
+
+test('custom server emoji are found by name, used for reacting and text, and recognised on reactions', async () => {
+  const w = world();
+  const rr = new ReactionRoles({ store: tmp(), client: w.client, log: quiet });
+  const emojis = [
+    { id: '11', name: 'roblox_update', animated: false },
+    { id: '22', name: 'bot_update', animated: true },
+  ];
+  await rr.refreshEmojis({ emojis: { fetch: async () => new Map(emojis.map((e) => [e.id, e])) } });
+  assert.equal(rr.reactArg('game_updates'), 'roblox_update:11');
+  assert.equal(rr.reactKey('game_updates'), '11');
+  assert.equal(rr.display('bot_updates'), '<a:bot_update:22>');
+  assert.equal(rr.reactArg('api_status'), EMOJIS.api_status); // no custom one: standard emoji
+  assert.equal(rr.logForEmoji({ id: '11', name: 'roblox_update' }), 'game_updates');
+  assert.equal(rr.logForEmoji({ id: '99', name: 'other' }), null);
+  assert.equal(rr.logForEmoji({ id: null, name: EMOJIS.api_status }), 'api_status');
+
+  await rr.setMessage('c', 'M');
+  await rr.handleAdd({ partial: false, emoji: { id: '11', name: 'roblox_update' }, message: { id: 'M', guild: null } }, w.user('u'));
+  assert.deepEqual(rr.subscribers('game_updates'), ['u']);
+});

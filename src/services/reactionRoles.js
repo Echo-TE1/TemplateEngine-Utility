@@ -4,6 +4,15 @@ const { LOG_TYPES, LOG_DESCRIPTIONS, labelFor } = require('./logChannels');
 
 const DOC = 'reactionroles';
 
+// Names of the custom emoji to look for in the server. If one is missing, the standard emoji below is used.
+const CUSTOM_NAMES = {
+  platform_status: 'platform_status',
+  website_status: 'website_status',
+  api_status: 'api_status',
+  game_updates: 'roblox_update',
+  bot_updates: 'bot_update',
+};
+
 // One reaction per log. Reactions can only be emoji, so they are written as escapes.
 const EMOJIS = {
   platform_status: '\u{1F4E1}',
@@ -26,6 +35,7 @@ class ReactionRoles {
     this.roles = {}; // log -> role id
     this.message = null; // { channelId, messageId }
     this.subs = {}; // log -> [user ids]
+    this.custom = {}; // log -> { id, name, animated } found in the server
   }
 
   async load() {
@@ -111,11 +121,43 @@ class ReactionRoles {
     return created;
   }
 
+  /** Looks for the custom emoji (by name) in the server; logs without one use the standard emoji. */
+  async refreshEmojis(guild) {
+    this.custom = {};
+    if (!guild || !guild.emojis) return;
+    try {
+      const all = await guild.emojis.fetch();
+      for (const type of Object.keys(CUSTOM_NAMES)) {
+        const found = [...all.values()].find((e) => e.name === CUSTOM_NAMES[type]);
+        if (found) this.custom[type] = { id: found.id, name: found.name, animated: Boolean(found.animated) };
+      }
+    } catch (error) {
+      this.log.warn(`[ReactionRoles] could not read server emoji: ${error.message}`);
+    }
+  }
+
+  /** What to pass to message.react, and the key it has in message.reactions.cache. */
+  reactArg(type) {
+    const c = this.custom[type];
+    return c ? `${c.name}:${c.id}` : EMOJIS[type];
+  }
+
+  reactKey(type) {
+    const c = this.custom[type];
+    return c ? c.id : EMOJIS[type];
+  }
+
+  /** How the emoji is written inside message text. */
+  display(type) {
+    const c = this.custom[type];
+    return c ? `<${c.animated ? 'a' : ''}:${c.name}:${c.id}>` : EMOJIS[type];
+  }
+
   /** The text of the reaction message (shows each log and its role). */
   messagePayload() {
     const lines = LOG_TYPES.map((t) => {
       const role = this.roleFor(t.value);
-      return `${EMOJIS[t.value]} **${t.name}** — ${LOG_DESCRIPTIONS[t.value]}${role ? ` (<@&${role}>)` : ''}`;
+      return `${this.display(t.value)} **${t.name}** — ${LOG_DESCRIPTIONS[t.value]}${role ? ` (<@&${role}>)` : ''}`;
     });
     return {
       embeds: [
@@ -133,8 +175,9 @@ class ReactionRoles {
 
   /** Posts a fresh reaction message in a channel and remembers it. */
   async publish(channel) {
+    await this.refreshEmojis(channel.guild);
     const message = await channel.send(this.messagePayload());
-    for (const t of LOG_TYPES) await message.react(EMOJIS[t.value]);
+    for (const t of LOG_TYPES) await message.react(this.reactArg(t.value));
     await this.setMessage(channel.id, message.id);
     return message;
   }
@@ -168,9 +211,15 @@ class ReactionRoles {
       this.log.log('[ReactionRoles] Reaction message was gone, posted it again.');
       return 'reposted';
     }
+    await this.refreshEmojis(channel.guild);
     await message.edit(this.messagePayload()).catch((e) => this.log.warn(`[ReactionRoles] could not refresh text: ${e.message}`));
     for (const t of LOG_TYPES) {
-      if (!message.reactions.cache.has(EMOJIS[t.value])) await message.react(EMOJIS[t.value]).catch(() => {});
+      if (!message.reactions.cache.has(this.reactKey(t.value))) await message.react(this.reactArg(t.value)).catch(() => {});
+    }
+    // Remove the bot's own reactions that no longer belong (e.g. the standard emoji once a custom one exists).
+    const keep = new Set(LOG_TYPES.map((t) => this.reactKey(t.value)));
+    for (const [key, reaction] of message.reactions.cache) {
+      if (!keep.has(key) && reaction.me && this.client.user) await reaction.users.remove(this.client.user.id).catch(() => {});
     }
     await this.#catchUp(message).catch((e) => this.log.warn(`[ReactionRoles] catch-up failed: ${e.message}`));
     return 'ok';
@@ -179,7 +228,7 @@ class ReactionRoles {
   // Make subscriptions match the reactions that are really on the message.
   async #catchUp(message) {
     for (const t of LOG_TYPES) {
-      const reaction = message.reactions.cache.get(EMOJIS[t.value]);
+      const reaction = message.reactions.cache.get(this.reactKey(t.value));
       const present = new Set();
       if (reaction) {
         const users = await reaction.users.fetch();
@@ -199,8 +248,12 @@ class ReactionRoles {
     }
   }
 
-  logForEmoji(name) {
-    return Object.keys(EMOJIS).find((type) => EMOJIS[type] === name) || null;
+  /** Which log a reaction's emoji stands for (custom by name or id, or the standard emoji). */
+  logForEmoji(emoji) {
+    if (emoji.id) {
+      return Object.keys(CUSTOM_NAMES).find((t) => (this.custom[t] && this.custom[t].id === emoji.id) || CUSTOM_NAMES[t] === emoji.name) || null;
+    }
+    return Object.keys(EMOJIS).find((t) => EMOJIS[t] === emoji.name) || null;
   }
 
   subscribers(type) {
@@ -237,7 +290,7 @@ class ReactionRoles {
     if (user.bot) return;
     if (reaction.partial) reaction = await reaction.fetch();
     if (!this.isWatching(reaction)) return;
-    const type = this.logForEmoji(reaction.emoji.name);
+    const type = this.logForEmoji(reaction.emoji);
     if (!type) return;
 
     const label = labelFor(type);
@@ -277,7 +330,7 @@ class ReactionRoles {
     if (user.bot) return;
     if (reaction.partial) reaction = await reaction.fetch();
     if (!this.isWatching(reaction)) return;
-    const type = this.logForEmoji(reaction.emoji.name);
+    const type = this.logForEmoji(reaction.emoji);
     if (!type) return;
     await this.unsubscribe(type, user.id);
     const roleId = this.roleFor(type);
@@ -317,4 +370,4 @@ class ReactionRoles {
   }
 }
 
-module.exports = { ReactionRoles, EMOJIS, LOG_TYPES };
+module.exports = { ReactionRoles, EMOJIS, CUSTOM_NAMES, LOG_TYPES };
