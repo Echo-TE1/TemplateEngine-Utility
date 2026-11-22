@@ -207,7 +207,151 @@ function successEmbed(title, description) {
   return new EmbedBuilder().setTitle(title).setDescription(description).setColor(meta('operational').color);
 }
 
+// ---------------------------------------------------------------------------------------
+// Direct health checks, news, bot notices
+// ---------------------------------------------------------------------------------------
+const hostOf = (url) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+const isUrl = (s) => /^https?:\/\/\S+$/i.test(String(s || ''));
+
+function healthEmbed({ target, change, result, state }) {
+  const host = hostOf(target.url);
+  if (change === 'down') {
+    const reason = result.error || (result.httpStatus ? `HTTP ${result.httpStatus}` : 'no answer');
+    return new EmbedBuilder()
+      .setTitle(trim(`🔴 ${target.name} is not responding`, 256))
+      .setColor(meta('outage').color)
+      .setDescription(
+        `Our own check of \`${host}\` failed ${state.fails} times in a row.\n` +
+          'Roblox may not have posted about it on its status page yet.',
+      )
+      .addFields(
+        field('Last result', reason, true),
+        field('Detected', ts(state.downSince, 'R'), true),
+        field('Checked URL', target.url),
+      )
+      .setTimestamp(new Date());
+  }
+  const since = Date.parse(state.lastDownSince);
+  return new EmbedBuilder()
+    .setTitle(trim(`🟢 ${target.name} is back`, 256))
+    .setColor(meta('operational').color)
+    .setDescription(`\`${host}\` is answering again.`)
+    .addFields(
+      field('Was down for', Number.isFinite(since) ? duration(Date.parse(result.at) - since) : 'Unknown', true),
+      field('Response time', result.ms == null ? '—' : `${result.ms} ms`, true),
+    )
+    .setTimestamp(new Date());
+}
+
+function newsEmbed(feed, item) {
+  const embed = new EmbedBuilder()
+    .setTitle(trim(item.title, 256))
+    .setColor(0x00a2ff)
+    .setAuthor({ name: trim(feed.name, 256) });
+  if (isUrl(item.link)) embed.setURL(item.link);
+  if (item.summary) embed.setDescription(trim(item.summary, 400));
+  if (isUrl(item.image)) embed.setImage(item.image);
+  if (item.tags && item.tags.length) embed.setFooter({ text: trim(item.tags.join(' • '), 200) });
+  const published = new Date(item.published);
+  return embed.setTimestamp(Number.isFinite(published.getTime()) ? published : new Date());
+}
+
+const NOTICE_COLORS = { ok: meta('operational').color, warn: meta('degraded').color, bad: meta('outage').color };
+
+function botNoticeEmbed(title, description, level = 'ok') {
+  return new EmbedBuilder()
+    .setTitle(trim(title, 256))
+    .setColor(NOTICE_COLORS[level] || NOTICE_COLORS.ok)
+    .setDescription(trim(description, 3500))
+    .setTimestamp(new Date());
+}
+
+// ---------------------------------------------------------------------------------------
+// Uptime, /setup view, /botstatus
+// ---------------------------------------------------------------------------------------
+function uptimeEmbed(stats, ctx) {
+  const dot = (pct) => (pct >= 99.9 ? '🟢' : pct >= 99 ? '🟡' : '🔴');
+  const o = stats.overall;
+  const lines = stats.services
+    .slice(0, 15)
+    .map(
+      (s) =>
+        `${dot(s.pct)} **${trim(s.name, 40)}** — ${s.pct.toFixed(2)}% • ${s.count} incident${s.count === 1 ? '' : 's'}` +
+        (s.downMs ? ` • ${duration(s.downMs)}` : ''),
+    );
+  return new EmbedBuilder()
+    .setTitle(`📈 Roblox uptime — last ${stats.days} day${stats.days === 1 ? '' : 's'}`)
+    .setURL(ctx.statusPageUrl)
+    .setColor(COLOR_GREY)
+    .setDescription(
+      trim(
+        `**${o.count}** incident${o.count === 1 ? '' : 's'} • **${duration(o.downMs)}** of incident time • ` +
+          `**${o.pct.toFixed(2)}%** incident-free\n\n${lines.join('\n') || 'No services recorded yet.'}`,
+        4000,
+      ),
+    )
+    .setFooter({ text: 'Based on incidents Roblox reported, not measured by this bot.' })
+    .setTimestamp(new Date());
+}
+
+function logViewEmbed(rows, roles) {
+  const lines = rows.map(({ label, description, entry }) =>
+    entry
+      ? `✅ **${label}** → <#${entry.channelId}>\n${description}`
+      : `⬜ **${label}** — not set\n${description}`,
+  );
+  const embed = new EmbedBuilder()
+    .setTitle('⚙️ Log channels')
+    .setColor(COLOR_GREY)
+    .setDescription(trim(lines.join('\n\n'), 4000));
+  const roleLines = roles.map((r) => `**${r.service === '*' ? 'All alerts' : r.service}** → <@&${r.roleId}>`);
+  embed.addFields(field('Alert roles', roleLines.join('\n') || 'None. Set one with `/setup role`.'));
+  return embed;
+}
+
+function botStatusEmbed(info) {
+  const yes = '✅';
+  const no = '❌';
+  const embed = new EmbedBuilder()
+    .setTitle('🤖 Bot status')
+    .setColor(info.problems ? meta('degraded').color : meta('operational').color)
+    .addFields(
+      field('Uptime', info.uptime, true),
+      field('Discord ping', info.ping, true),
+      field('Memory', info.memory, true),
+      field('Database', info.database),
+      field('Roblox status API', info.statusApi),
+      field(
+        'Direct checks',
+        info.health.length
+          ? info.health.map((h) => `${h.ok === null ? '⏳' : h.ok ? yes : no} **${h.name}** — ${h.text}`).join('\n')
+          : 'Disabled',
+      ),
+      field(
+        'News feeds',
+        info.news.length
+          ? info.news.map((n) => `${n.ok === null ? '⏳' : n.ok ? yes : no} **${n.name}** — ${n.text}`).join('\n')
+          : 'Disabled',
+      ),
+      field('Logs set up', info.logs),
+    );
+  if (info.version) embed.setFooter({ text: `Version ${info.version} • Node ${process.version}` });
+  return embed.setTimestamp(new Date());
+}
+
 module.exports = {
+  healthEmbed,
+  newsEmbed,
+  botNoticeEmbed,
+  uptimeEmbed,
+  logViewEmbed,
+  botStatusEmbed,
   successEmbed,
   boardEmbed,
   incidentOpenEmbed,

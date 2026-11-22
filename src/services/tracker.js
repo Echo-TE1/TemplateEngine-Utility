@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { diff } = require('../lib/diff');
 const { annotate } = require('../lib/match');
 const embeds = require('../embeds');
+const { norm } = require('../lib/match');
 
 const UNKNOWN_MESSAGE = 10008; // Discord API error: the message was deleted
 const MAX_SEND_ATTEMPTS = 3;
@@ -15,15 +16,22 @@ class Tracker {
    * @param {object} deps.store         createStore() result
    * @param {object} deps.config        src/config.js
    * @param {object} deps.logChannels   LogChannels: the channel comes from /setup log (Platform Status)
+   * @param {object} [deps.serviceRoles]  ServiceRoles: which roles to ping per service (/setup role)
+   * @param {object} [deps.notifier]      Notifier: posts to the other logs (Website/API Status, Bot Updates)
    * @param {Function} [deps.fetchStatus]  (url) => normalized snapshot (replaceable for tests)
    */
-  constructor({ client, store, config, logChannels, fetchStatus = require('./statusClient').fetchStatus, log = console }) {
+  constructor({ client, store, config, logChannels, serviceRoles, notifier, fetchStatus = require('./statusClient').fetchStatus, log = console }) {
     this.client = client;
     this.store = store;
     this.config = config;
     this.logChannels = logChannels;
+    this.serviceRoles = serviceRoles || { rolesFor: () => (config.alertRoleId ? [config.alertRoleId] : []) };
+    this.notifier = notifier || { post: async () => false };
     this.fetchStatus = fetchStatus;
     this.log = log;
+    this.lastSuccessAt = null;
+    this.failureSince = null;
+    this.apiAlerted = false;
 
     this.state = null;
     this.lastSnapshot = null;
@@ -89,6 +97,11 @@ class Tracker {
     return this.store.getHistory(limit);
   }
 
+  /** Incidents that are open right now (for uptime numbers). */
+  openIncidents() {
+    return Object.values((this.state && this.state.incidents) || {});
+  }
+
   // ---- one check -----------------------------------------------------------------------
   async poll() {
     if (this.polling) return; // never run two checks at once
@@ -98,13 +111,22 @@ class Tracker {
       try {
         snapshot = await this.fetchSnapshot();
         this.failures = 0;
+        this.lastSuccessAt = Date.now();
         if (!this.loggedFirstCheck) {
           this.loggedFirstCheck = true;
           this.log.log(`[Tracker] First check OK: ${snapshot.services.length} services, ${snapshot.incidents.length} incident(s).`);
         }
+        if (this.apiAlerted) {
+          this.apiAlerted = false;
+          await this.notifier.post('bot_updates', {
+            embeds: [embeds.botNoticeEmbed('✅ Roblox status API reachable again', 'The bot can read Roblox\'s status data again.', 'ok')],
+          });
+        }
+        this.failureSince = null;
       } catch (error) {
         this.failures += 1;
         this.log.warn(`[Tracker] Could not read Roblox status (${this.failures} in a row): ${error.message}`);
+        await this.#maybeAlertUnreachable(error);
         if (this.failures === 3 && this.lastSnapshot) {
           // Tell readers of the live message that the data is getting old.
           await this.#updateBoard(
@@ -127,12 +149,31 @@ class Tracker {
       await this.store.saveState(this.state);
 
       await this.#deliver(events);
+      await this.#crossPost(events);
       await this.#updateBoard(snapshot);
     } catch (error) {
       this.log.error(`[Tracker] Poll failed: ${error.stack || error.message}`);
     } finally {
       this.polling = false;
     }
+  }
+
+  /** If Roblox's status API stays unreachable for a while, tell the Bot Updates log (once). */
+  async #maybeAlertUnreachable(error) {
+    if (!this.failureSince) this.failureSince = Date.now();
+    const minutes = (Date.now() - this.failureSince) / 60_000;
+    const after = this.config.botAlertAfterMinutes ?? 10;
+    if (this.apiAlerted || minutes < after) return;
+    this.apiAlerted = true;
+    await this.notifier.post('bot_updates', {
+      embeds: [
+        embeds.botNoticeEmbed(
+          '⚠️ Roblox status API unreachable',
+          `The bot has not been able to read Roblox's status data for about ${Math.round(minutes)} minutes, so the live status may be out of date.\n\`${error.message}\``,
+          'bad',
+        ),
+      ],
+    });
   }
 
   #ago(iso) {
@@ -164,18 +205,20 @@ class Tracker {
 
   async #send(event) {
     const channel = await this.#channel(this.channelId);
-    const roleId = this.config.alertRoleId;
-    const send = (embed, { ping = false, replyTo = null } = {}) =>
+    // roles: the Discord roles to ping (set per service with /setup role).
+    const send = (embed, { roles = [], replyTo = null } = {}) =>
       channel.send({
-        content: ping && roleId ? `<@&${roleId}>` : undefined,
+        content: roles.length ? roles.map((id) => `<@&${id}>`).join(' ') : undefined,
         embeds: [embed],
-        allowedMentions: ping && roleId ? { roles: [roleId] } : { parse: [] },
+        allowedMentions: roles.length ? { roles } : { parse: [] },
         reply: replyTo ? { messageReference: replyTo, failIfNotExists: false } : undefined,
       });
 
     switch (event.type) {
       case 'incident_open': {
-        const message = await send(embeds.incidentOpenEmbed(event.incident, this.ctx), { ping: true });
+        const message = await send(embeds.incidentOpenEmbed(event.incident, this.ctx), {
+          roles: this.serviceRoles.rolesFor(event.incident.trackedTerms || []),
+        });
         // Remember the message so updates and the resolution can reply to it.
         const record = this.state.incidents[event.incident.id];
         if (record) {
@@ -193,7 +236,7 @@ class Tracker {
       }
       case 'incident_resolved':
         await send(embeds.incidentResolvedEmbed(event.record, event.resolvedAt, this.ctx), {
-          ping: true,
+          roles: this.serviceRoles.rolesFor(event.record.trackedTerms || []),
           replyTo: event.record.messageId,
         });
         break;
@@ -202,6 +245,39 @@ class Tracker {
         break;
       default:
         break;
+    }
+  }
+
+  /**
+   * Copies Roblox events to the Website Status and API Status logs (no pings there; the Platform
+   * Status log already pings). Website things go to Website Status, everything else to API Status.
+   */
+  async #crossPost(events) {
+    const isWebsite = (name) => norm(name) === 'website';
+    const post = (type, embed) => this.notifier.post(type, { embeds: [embed] });
+
+    for (const event of events) {
+      let services = [];
+      let embed = null;
+      if (event.type === 'incident_open') {
+        services = event.incident.services;
+        embed = embeds.incidentOpenEmbed(event.incident, this.ctx);
+      } else if (event.type === 'incident_update') {
+        services = event.incident.services;
+        embed = embeds.incidentUpdateEmbed(event.incident, event.updates, this.ctx);
+      } else if (event.type === 'incident_resolved') {
+        services = event.record.services;
+        embed = embeds.incidentResolvedEmbed(event.record, event.resolvedAt, this.ctx);
+      } else if (event.type === 'service_change') {
+        const web = event.changes.filter((c) => isWebsite(c.name));
+        const api = event.changes.filter((c) => !isWebsite(c.name));
+        if (web.length) await post('website_status', embeds.serviceChangeEmbed(web, this.ctx));
+        if (api.length) await post('api_status', embeds.serviceChangeEmbed(api, this.ctx));
+        continue;
+      }
+      if (!embed) continue;
+      if (services.some(isWebsite)) await post('website_status', embed);
+      if (services.some((s) => !isWebsite(s))) await post('api_status', embed);
     }
   }
 

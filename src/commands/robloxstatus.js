@@ -1,13 +1,14 @@
 'use strict';
 
 const { SlashCommandBuilder } = require('discord.js');
-const { boardEmbed, historyEmbed, errorEmbed } = require('../embeds');
+const { boardEmbed, historyEmbed, uptimeEmbed, errorEmbed } = require('../embeds');
 const { respondWhenReady } = require('../lib/respond');
+const { uptimeStats } = require('../lib/stats');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('robloxstatus')
-    .setDescription('Show the current Roblox status, or the history of recent incidents.')
+    .setDescription('Show the current Roblox status, recent incidents, or uptime.')
     .addStringOption((option) =>
       option
         .setName('view')
@@ -15,6 +16,7 @@ module.exports = {
         .addChoices(
           { name: 'Current status', value: 'current' },
           { name: 'Incident history', value: 'history' },
+          { name: 'Uptime (incident based)', value: 'uptime' },
         ),
     )
     .addIntegerOption((option) =>
@@ -23,17 +25,33 @@ module.exports = {
         .setDescription('History only: how many incidents to show (1-10, default 5).')
         .setMinValue(1)
         .setMaxValue(10),
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName('days')
+        .setDescription('Uptime only: how many days to look back (1-90, default 30).')
+        .setMinValue(1)
+        .setMaxValue(90),
     ),
 
   async execute(interaction, { tracker }) {
     const view = interaction.options.getString('view') || 'current';
     const count = interaction.options.getInteger('count') || 5;
+    const days = interaction.options.getInteger('days') || 30;
 
     // Builds the message. It never throws: problems become an error embed.
     const build = async () => {
       try {
         if (view === 'history') {
           return { embeds: [historyEmbed(await tracker.getHistory(count), tracker.ctx)] };
+        }
+        if (view === 'uptime') {
+          // Tracked services that exist on Roblox's page are listed even with no incidents (100%).
+          const virtual = (tracker.lastSnapshot && tracker.lastSnapshot.tracking.virtual) || [];
+          const include = tracker.config.trackedServices.filter((s) => !virtual.includes(s));
+          const history = await tracker.getHistory(5000);
+          const stats = uptimeStats(history, { days, open: tracker.openIncidents(), include });
+          return { embeds: [uptimeEmbed(stats, tracker.ctx)] };
         }
         const { snapshot, stale } = await tracker.getSnapshot();
         const warning = stale

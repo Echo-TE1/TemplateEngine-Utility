@@ -60,6 +60,7 @@ function diff(prev, snapshot, options = {}) {
       groups: incident.groups,
       level: incident.level,
       tracked: incident.tracked,
+      trackedTerms: incident.trackedTerms || [], // lets the "resolved" message ping the right roles
       missing: 0,
       updates: incident.messages
         .slice(-MAX_STORED_UPDATES)

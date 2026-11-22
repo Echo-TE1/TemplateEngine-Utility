@@ -9,6 +9,15 @@ const LOG_TYPES = [
   { value: 'bot_updates', name: 'Bot Updates' },
 ];
 
+// What each log receives (shown by /setup view).
+const LOG_DESCRIPTIONS = {
+  platform_status: 'Live Roblox status message + incident alerts',
+  website_status: 'Website outages: Roblox status "Website" + direct roblox.com checks',
+  api_status: 'API / services outages: other Roblox services + direct API checks',
+  game_updates: 'Roblox news: platform updates, events and announcements',
+  bot_updates: 'Bot startup, problems, and the daily backup',
+};
+
 const labelFor = (type) => (LOG_TYPES.find((t) => t.value === type) || {}).name || null;
 
 /**
@@ -41,6 +50,14 @@ class LogChannels {
     this.map[type] = record;
   }
 
+  /** Stops posting to a category. Returns true if it was set. */
+  async clear(type) {
+    const had = Boolean(this.map[type]);
+    await this.store.clearLogChannel(type);
+    delete this.map[type];
+    return had;
+  }
+
   /** Posts to a category's channel. Returns the message, or null if that category is not set up. */
   async send(type, payload) {
     const id = this.get(type);
@@ -51,4 +68,4 @@ class LogChannels {
   }
 }
 
-module.exports = { LogChannels, LOG_TYPES, labelFor };
+module.exports = { LogChannels, LOG_TYPES, LOG_DESCRIPTIONS, labelFor };
