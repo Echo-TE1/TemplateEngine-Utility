@@ -14,6 +14,7 @@ const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { ReactionRoles } = require('./src/services/reactionRoles');
+const { MemberCountNote } = require('./src/services/memberCount');
 const { TempChannels } = require('./src/services/tempChannels');
 const { RobloxProfiles } = require('./src/services/robloxProfile');
 const { ProfilePanel } = require('./src/services/profilePanel');
@@ -72,6 +73,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   await logChannels.load();
   const serviceRoles = new ServiceRoles({ store, fallbackRoleId: config.alertRoleId });
   await serviceRoles.load();
+  const memberCount = config.memberCountEnabled ? new MemberCountNote({ client, guildId: config.memberCountGuildId }) : null;
   const tempChannels = new TempChannels({ client, store });
   await tempChannels.load();
   const profiles = new RobloxProfiles({ cookie: config.robloxCookie });
@@ -90,7 +92,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, reactionRoles, tempChannels, profiles, profilePanel, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, memberCount, reactionRoles, tempChannels, profiles, profilePanel, mirrorIntentRefused, startedAt };
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
@@ -108,6 +110,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     await tracker.start();
     notifier.start();
     tempChannels.start();
+    if (memberCount) memberCount.start();
     if (health) await health.start();
     if (news) await news.start();
 
@@ -177,6 +180,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     tracker.stop();
     notifier.stop();
     tempChannels.stop();
+    if (memberCount) memberCount.stop();
     if (health) health.stop();
     if (news) news.stop();
     try {

@@ -31,6 +31,10 @@ Where each value comes from, and when it says **Unavailable** (nothing is ever g
 - **Online status**: Roblox hides this from logged-out requests, so it shows **Unavailable** unless you set `ROBLOX_COOKIE` (an optional `.ROBLOSECURITY` cookie, ideally from a throwaway account; it is only sent to Roblox and never logged or stored). Users with privacy settings still show Offline.
 - Invalid names, unknown accounts, rate limits and Roblox outages each get a clear private message. Results are cached for 30 seconds and each person can search or refresh once every 5 seconds, to stay under Roblox's rate limits.
 
+### Member count note
+
+The bot's profile note (its **About Me**) is kept at `Watching over N members`, where N is the member count of server `1573644874077708438` (bots included). It is checked every 10 minutes and only edited when the number changes. The bot must be in that server; `/botstatus` shows the count or the problem. Change the server with `MEMBER_COUNT_GUILD_ID`, or turn it off with `MEMBER_COUNT_ENABLED=false`.
+
 ### Message mirror
 
 The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments). When the original is sent the bot reacts with a check mark. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
@@ -95,6 +99,8 @@ Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on 
 | `NEWS_POLL_MINUTES` | `30` | News check frequency (min 5). |
 | `NEWS_FEEDS` | Roblox Blog, DevForum Updates | `Name=https://feed-url,...` |
 | `ROBLOX_COOKIE` | | Optional. Lets the profile lookup show online status. |
+| `MEMBER_COUNT_ENABLED` | `true` | Keep the bot's About Me showing a server's member count. |
+| `MEMBER_COUNT_GUILD_ID` | `1573644874077708438` | The server to count. |
 | `MIRROR_ENABLED` | `true` | Turn the message mirror on/off. |
 | `MIRROR_CHANNEL_ID` | `1573743378368176148` | Channel to watch. |
 | `MIRROR_USER_ID` | `1219266886143967245` | Only this user's messages are copied. |
@@ -136,6 +142,7 @@ src/services/reactionRoles.js reaction roles + DM subscribers
 src/services/robloxProfile.js  Roblox profile lookup (Roblox APIs + Rolimons)
 src/services/profilePanel.js   the permanent Search Roblox User panel
 src/services/tempChannels.js  temporary channels from /channel create
+src/services/memberCount.js    bot About Me = member count
 src/services/mirror.js        message mirror (copy / edit / delete to Bot Updates)
 src/services/notifier.js      posts to the log channels (with retry)
 src/services/logChannels.js   which channel each log uses

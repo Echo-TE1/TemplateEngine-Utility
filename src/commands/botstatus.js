@@ -7,7 +7,7 @@ const { LOG_TYPES } = require('../services/logChannels');
 const { duration, ts } = require('../lib/format');
 
 function collect(context, client) {
-  const { tracker, health, news, mirror, mirrorIntentRefused, store, logChannels, config, startedAt } = context;
+  const { tracker, health, news, mirror, memberCount, mirrorIntentRefused, store, logChannels, config, startedAt } = context;
   let problems = false;
 
   // Roblox status API (the main data source)
@@ -64,6 +64,20 @@ function collect(context, client) {
     mirrorText = 'Disabled';
   }
 
+  // Member count note
+  let memberText = null;
+  if (memberCount) {
+    const st = memberCount.stats;
+    if (st.error) {
+      problems = true;
+      memberText = `✕ ${st.error}`;
+    } else if (st.count != null) {
+      memberText = `✓ ${st.count.toLocaleString('en-US')} members`;
+    } else {
+      memberText = '… Not checked yet';
+    }
+  }
+
   // Database
   let database = store.persistent
     ? `✓ ${store.kind} (saved permanently)`
@@ -89,6 +103,7 @@ function collect(context, client) {
     health: healthRows,
     news: newsRows,
     mirror: mirrorText,
+    memberCount: memberText,
     logs: `${setCount}/${LOG_TYPES.length} set up` + (setCount < LOG_TYPES.length ? ' (see /setup view)' : ''),
     version: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7),
   };
