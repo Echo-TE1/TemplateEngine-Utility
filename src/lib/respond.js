@@ -4,7 +4,7 @@ const EPHEMERAL = 64; // Discord's message flag for "only visible to you" (EPHEM
 const { toBody, raw } = require('./discordRaw');
 
 const trace = (interaction, step) =>
-  console.log(`[Cmd] /${interaction.commandName} ${step} (+${Date.now() - interaction.createdTimestamp}ms)`);
+  console.log(`[Cmd] ${interaction.commandName ? "/" + interaction.commandName : interaction.customId} ${step} (+${Date.now() - interaction.createdTimestamp}ms)`);
 
 const withTimeout = (promise, ms, label) => {
   let timer;

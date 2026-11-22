@@ -13,7 +13,7 @@ const {
 } = require('discord.js');
 const { errorEmbed, successEmbed, profileEmbed, profilePanelEmbed } = require('../embeds');
 const { ProfileError } = require('../services/robloxProfile');
-const { editReply } = require('../lib/respond');
+const { editReply, respondWhenReady } = require('../lib/respond');
 
 const PREFIX = 'rp:';
 const SEARCH = `${PREFIX}search`;
@@ -83,6 +83,15 @@ async function withTimeout(promise) {
     return await Promise.race([promise, timeout]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// Runs a lookup and returns the message to show (the profile card or a friendly error). Never throws.
+async function lookupPayload(run) {
+  try {
+    return resultPayload(await withTimeout(run()));
+  } catch (error) {
+    return problem(error);
   }
 }
 
@@ -168,12 +177,14 @@ module.exports = {
       if (wait) {
         return interaction.reply({ embeds: [errorEmbed('Slow down', `Please wait ${wait}s before refreshing again.`)], flags: MessageFlags.Ephemeral });
       }
+      // Fast path: if Roblox answers within 2.5s the card replaces the old one in a single step.
+      const work = lookupPayload(() => context.profiles.byId(id, { force: true }));
+      let timer;
+      const early = await Promise.race([work, new Promise((resolve) => { timer = setTimeout(() => resolve(null), 2500); })]);
+      clearTimeout(timer);
+      if (early) return interaction.update(early);
       await interaction.deferUpdate();
-      try {
-        await finish(interaction, resultPayload(await withTimeout(context.profiles.byId(id, { force: true }))));
-      } catch (error) {
-        await finish(interaction, problem(error));
-      }
+      return finish(interaction, await work);
     }
   },
 
@@ -184,12 +195,11 @@ module.exports = {
     if (wait) {
       return interaction.reply({ embeds: [errorEmbed('Slow down', `Please wait ${wait}s before searching again.`)], flags: MessageFlags.Ephemeral });
     }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    try {
-      const username = interaction.fields.getTextInputValue('username');
-      await finish(interaction, resultPayload(await withTimeout(context.profiles.lookup(username))));
-    } catch (error) {
-      await finish(interaction, problem(error));
-    }
+    // Fast path: reply in one step when Roblox answers quickly, otherwise "thinking..." then the result.
+    const username = interaction.fields.getTextInputValue('username');
+    await respondWhenReady(interaction, () => lookupPayload(() => context.profiles.lookup(username)), {
+      quickMs: 2500,
+      ephemeral: true,
+    });
   },
 };
