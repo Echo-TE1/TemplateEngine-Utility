@@ -15,7 +15,7 @@ const LOG_DESCRIPTIONS = {
   website_status: 'Website outages: Roblox status "Website" + direct roblox.com checks',
   api_status: 'API / services outages: other Roblox services + direct API checks',
   game_updates: 'Roblox news: platform updates, events and announcements',
-  bot_updates: 'Bot startup, problems, and the daily backup',
+  bot_updates: 'Bot redeploy notices and mirrored messages',
 };
 
 const labelFor = (type) => (LOG_TYPES.find((t) => t.value === type) || {}).name || null;

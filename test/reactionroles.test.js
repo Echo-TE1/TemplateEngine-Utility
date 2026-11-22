@@ -131,3 +131,51 @@ test('ensureRoles does nothing (and does not throw) when no server is known yet'
   const rr = new ReactionRoles({ store: tmp(), client: { channels: { cache: new Map(), fetch: async () => null } }, log: quiet });
   assert.deepEqual(await rr.ensureRoles({ get: () => null }, {}), []);
 });
+
+function fakeChannel(existing) {
+  const sent = [];
+  const message = {
+    id: 'MSG', guild: { members: { fetch: async (id) => ({ roles: { add: async (r) => message.roleOps.push(['add', id, r]), remove: async (r) => message.roleOps.push(['remove', id, r]) } }) } },
+    roleOps: [], edits: 0, reacted: [],
+    reactions: { cache: new Map() },
+    edit: async () => { message.edits += 1; },
+    react: async (e) => { message.reacted.push(e); },
+  };
+  const channel = {
+    id: 'CH', isTextBased: () => true,
+    messages: { fetch: async (id) => { if (existing && id === 'MSG') return message; throw new Error('Unknown Message'); } },
+    send: async (p) => { sent.push(p); return message; },
+  };
+  return { channel, message, sent };
+}
+
+test('ensureMessage: after a redeploy it refreshes the message, re-adds reactions and catches up', async () => {
+  const { channel, message } = fakeChannel(true);
+  const client = { channels: { cache: new Map([['CH', channel]]), fetch: async () => channel } };
+  const rr = new ReactionRoles({ store: tmp(), client, log: quiet });
+  await rr.setRole('game_updates', 'roleG');
+  await rr.setMessage('CH', 'MSG');
+  await rr.subscribe('game_updates', 'gone'); // removed their reaction while the bot was offline
+  message.reactions.cache.set(EMOJIS.game_updates, { users: { fetch: async () => new Map([['n', { id: 'new', bot: false }], ['b', { id: 'bot', bot: true }]]) } });
+
+  assert.equal(await rr.ensureMessage(), 'ok');
+  assert.equal(message.edits, 1);
+  assert.equal(message.reacted.length, 4); // the four emojis that were missing
+  assert.deepEqual(rr.subscribers('game_updates'), ['new']);
+  assert.deepEqual(message.roleOps, [['add', 'new', 'roleG'], ['remove', 'gone', 'roleG']]);
+});
+
+test('ensureMessage: a deleted message is posted again; nothing saved or unreachable channel is handled', async () => {
+  const { channel, sent } = fakeChannel(false);
+  const client = { channels: { cache: new Map([['CH', channel]]), fetch: async () => channel } };
+  const rr = new ReactionRoles({ store: tmp(), client, log: quiet });
+  assert.equal(await rr.ensureMessage(), 'none');
+  await rr.setMessage('CH', 'OLD');
+  assert.equal(await rr.ensureMessage(), 'reposted');
+  assert.equal(sent.length, 1);
+  assert.equal(rr.message.messageId, 'MSG');
+
+  const lost = new ReactionRoles({ store: tmp(), client: { channels: { cache: new Map(), fetch: async () => { throw new Error('x'); } } }, log: quiet });
+  await lost.setMessage('NOPE', 'M');
+  assert.equal(await lost.ensureMessage(), 'missing-channel');
+});

@@ -16,8 +16,9 @@ Nothing is posted to a log until you set its channel.
 
 ### Reaction roles and private alerts
 
-**Roles are created automatically**: on every start (and whenever you run `/setup log`, `/reactionrole set` or `post`) the bot creates a `<Log> Alerts` role for every log that lacks one, reusing a role with that name if it exists and recreating one that was deleted. New logs get theirs the same way. (The bot needs **Manage Roles**.) `/reactionrole set` (owner) opens a private panel with one role picker per log. `/reactionrole post channel_id:<id>` posts the reaction message (📡 Platform Status, 🌐 Website Status, ⚙️ API Status, 🎮 Game Updates, 🤖 Bot Updates). When someone reacts they get that log's role (if you picked one) and the bot **DMs them, mentioning them, whenever something is posted to that log** (new alerts, updates, recoveries, news). Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
-Needs: Manage Roles with the bot's role above the roles you pick, Add Reactions in the channel, and people must have DMs from server members open. The daily backup file is never DMed, and the live status message edits are not DMed (only new posts). Re-run `/reactionrole post` after changing roles to refresh the text; the old message stops working.
+**Roles are created automatically**: on every start (and whenever you run `/setup log`, `/reactionrole set` or `post`) the bot creates a `<Log> Alerts` role for every log that lacks one, reusing a role with that name if it exists and recreating one that was deleted. New logs get theirs the same way. (The bot needs **Manage Roles**.) `/reactionrole set channel_id:<id>` (owner) posts the reaction message (📡 Platform Status, 🌐 Website Status, ⚙️ API Status, 🎮 Game Updates, 🤖 Bot Updates). When someone reacts they get that log's role and the bot **DMs them, mentioning them, whenever something is posted to that log**. Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
+
+**It survives redeploys:** the channel, message and subscribers are saved. On every start the bot finds the message, refreshes its text, re-adds its own reactions, re-posts it if it was deleted, and catches up on reactions added or removed while it was offline. This needs `MONGO_URI`; without it Render wipes the saved data on redeploy and you must run `/reactionrole set` again.
 
 ### Message mirror
 
@@ -33,9 +34,9 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 | `/setup view` | owner | Show which channel each log uses and the alert roles. |
 | `/setup clear action` | owner | Stop posting a log. |
 | `/setup role service [role]` | owner | Role pinged for incidents on a service (or "All alerts"). Leave `role` empty to remove it. |
-| `/reactionrole set` / `post` | owner | Choose a role per log, then post the reaction message that subscribes people to DMs. |
+| `/reactionrole set channel_id` | owner | Post the reaction message in a channel (kept up to date automatically). |
+| `/channel create` | owner | Create a chat, voice, announcement, stage or forum channel (`name`, `action`, `type`; optional `category`, `allowed_roles`, `duration` and 19 allow/deny permission options). `type: Temporary` needs a `duration` (`1m`, `1h`, `1d`, `1w`, `1mo`, `1year`) and the bot deletes the channel when it is up, also after a redeploy (needs `MONGO_URI`). With `allowed_roles` the channel is hidden from everyone else. Needs Manage Channels. |
 | `/botstatus` | owner | Uptime, Discord ping, database, last good Roblox check, direct checks, news feeds, logs set up. |
-| `/backup` | owner | Download everything the bot remembers as a JSON file (only on request; no longer posted daily) (no tokens or secrets in it). |
 
 "Owner" is the user in `BOT_OWNER_ID` (default `1219266886143967245`). Everyone else gets a private "Permission Denied". Owner commands reply privately.
 
@@ -52,7 +53,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 
 1. **Build Command:** `npm install` **Start Command:** `node index.js`.
 2. Keep `DISCORD_TOKEN` and `MONGO_URI`. No channel variables are needed.
-3. Deploy. The bot registers its commands (this replaces the old `/ad` and `/channel` commands).
+3. Deploy. The bot registers its commands (this replaces the old `/ad` command; `/channel` was ported).
 4. In Discord, run `/setup log` for each log you want. Give the bot **View Channel, Send Messages, Embed Links, Read Message History** in those channels. Platform Status shows the live message right away.
 5. Optional: `/setup role` to ping a role per service. Pings only work if the role is mentionable or the bot has **Mention @everyone, @here and All Roles**.
 
@@ -118,8 +119,8 @@ src/commands/                 slash commands (drop a file here to add one)
 src/services/tracker.js       status polling, alerts, live message, routing to logs
 src/services/health.js        direct checks of roblox.com and the APIs
 src/services/news.js          Roblox news feeds
-src/services/backup.js        /backup and the daily backup
 src/services/reactionRoles.js reaction roles + DM subscribers
+src/services/tempChannels.js  temporary channels from /channel create
 src/services/mirror.js        message mirror (copy / edit / delete to Bot Updates)
 src/services/notifier.js      posts to the log channels (with retry)
 src/services/logChannels.js   which channel each log uses

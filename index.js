@@ -14,6 +14,7 @@ const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { ReactionRoles } = require('./src/services/reactionRoles');
+const { TempChannels } = require('./src/services/tempChannels');
 const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
 
@@ -69,6 +70,8 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   await logChannels.load();
   const serviceRoles = new ServiceRoles({ store, fallbackRoleId: config.alertRoleId });
   await serviceRoles.load();
+  const tempChannels = new TempChannels({ client, store });
+  await tempChannels.load();
   const reactionRoles = new ReactionRoles({ store, client });
   await reactionRoles.load();
   const notifier = new Notifier({ logChannels, subscribers: reactionRoles });
@@ -82,7 +85,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, reactionRoles, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, reactionRoles, tempChannels, mirrorIntentRefused, startedAt };
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
@@ -99,11 +102,14 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     }
     await tracker.start();
     notifier.start();
+    tempChannels.start();
     if (health) await health.start();
     if (news) await news.start();
 
     // Make sure every log has its reaction role (creates any that are missing).
     await reactionRoles.ensureRoles(logChannels, config).catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
+    // Restore the reaction message (re-post if deleted) and catch up on reactions made while offline.
+    await reactionRoles.ensureMessage().catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
 
     // Bot Updates only gets redeploy notices and mirrored messages.
     await notifier.post('bot_updates', { embeds: [botNoticeEmbed('🟢 Bot redeployed', 'The bot restarted and is running.', 'ok')] });
@@ -113,17 +119,6 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     reactionRoles.handleAdd(reaction, user).catch((e) => console.error(`[ReactionRoles] add failed: ${e.message}`)));
   client.on(Events.MessageReactionRemove, (reaction, user) =>
     reactionRoles.handleRemove(reaction, user).catch((e) => console.error(`[ReactionRoles] remove failed: ${e.message}`)));
-
-  // Role pickers from /reactionrole set.
-  client.on(Events.InteractionCreate, async (interaction) => {
-    if (!interaction.isRoleSelectMenu || !interaction.isRoleSelectMenu()) return;
-    if (!interaction.customId.startsWith('rr:')) return;
-    try {
-      await commands.get('reactionrole').handleComponent(interaction, context);
-    } catch (error) {
-      console.error(`[Component Error] ${interaction.customId}: ${error.stack || error.message}`);
-    }
-  });
 
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -161,6 +156,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     console.log(`[Shutdown] ${signal} received.`);
     tracker.stop();
     notifier.stop();
+    tempChannels.stop();
     if (health) health.stop();
     if (news) news.stop();
     try {

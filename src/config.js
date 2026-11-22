@@ -96,9 +96,7 @@ const config = {
   newsPollMinutes: int('NEWS_POLL_MINUTES', 30, 5),
   newsFeeds: targets('NEWS_FEEDS', DEFAULT_NEWS_FEEDS),
 
-  // Bot-problem alerts and backups (Bot Updates log).
   botAlertAfterMinutes: int('BOT_ALERT_AFTER_MINUTES', 10, 1),
-  backupDaily: bool('BACKUP_DAILY', true),
 
   // Message mirror: copies this user's messages in this channel to the Bot Updates log.
   mirrorEnabled: bool('MIRROR_ENABLED', true),

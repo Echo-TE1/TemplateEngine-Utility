@@ -1,6 +1,6 @@
 'use strict';
 
-const { LOG_TYPES, labelFor } = require('./logChannels');
+const { LOG_TYPES, LOG_DESCRIPTIONS, labelFor } = require('./logChannels');
 
 const DOC = 'reactionroles';
 
@@ -109,6 +109,94 @@ class ReactionRoles {
     }
     if (created.length) this.log.log(`[ReactionRoles] Created roles: ${created.join(', ')}`);
     return created;
+  }
+
+  /** The text of the reaction message (shows each log and its role). */
+  messagePayload() {
+    const lines = LOG_TYPES.map((t) => {
+      const role = this.roleFor(t.value);
+      return `${EMOJIS[t.value]} **${t.name}** — ${LOG_DESCRIPTIONS[t.value]}${role ? ` (<@&${role}>)` : ''}`;
+    });
+    return {
+      embeds: [
+        {
+          color: 0x5865f2,
+          title: '🔔 Get notified',
+          description:
+            'React to choose what you want to hear about. You get the role and the bot **DMs you** when it happens (make sure your DMs are open). Remove the reaction to stop.\n\n' +
+            lines.join('\n'),
+        },
+      ],
+      allowedMentions: { parse: [] },
+    };
+  }
+
+  /** Posts a fresh reaction message in a channel and remembers it. */
+  async publish(channel) {
+    const message = await channel.send(this.messagePayload());
+    for (const t of LOG_TYPES) await message.react(EMOJIS[t.value]);
+    await this.setMessage(channel.id, message.id);
+    return message;
+  }
+
+  /**
+   * Run on every start (and by /reactionrole set): finds the saved reaction message, refreshes its text,
+   * re-adds missing bot reactions, and catches up on reactions added or removed while the bot was offline.
+   * If the message was deleted it is posted again in the saved channel.
+   * @returns {Promise<'none'|'missing-channel'|'reposted'|'ok'>}
+   */
+  async ensureMessage() {
+    if (!this.message) return 'none';
+    let channel = null;
+    try {
+      channel = this.client.channels.cache.get(this.message.channelId) || (await this.client.channels.fetch(this.message.channelId));
+    } catch {
+      channel = null;
+    }
+    if (!channel || !channel.isTextBased()) {
+      this.log.warn(`[ReactionRoles] Channel ${this.message.channelId} is not reachable; run /reactionrole set again.`);
+      return 'missing-channel';
+    }
+    let message = null;
+    try {
+      message = await channel.messages.fetch(this.message.messageId);
+    } catch {
+      message = null;
+    }
+    if (!message) {
+      await this.publish(channel);
+      this.log.log('[ReactionRoles] Reaction message was gone, posted it again.');
+      return 'reposted';
+    }
+    await message.edit(this.messagePayload()).catch((e) => this.log.warn(`[ReactionRoles] could not refresh text: ${e.message}`));
+    for (const t of LOG_TYPES) {
+      if (!message.reactions.cache.has(EMOJIS[t.value])) await message.react(EMOJIS[t.value]).catch(() => {});
+    }
+    await this.#catchUp(message).catch((e) => this.log.warn(`[ReactionRoles] catch-up failed: ${e.message}`));
+    return 'ok';
+  }
+
+  // Make subscriptions match the reactions that are really on the message.
+  async #catchUp(message) {
+    for (const t of LOG_TYPES) {
+      const reaction = message.reactions.cache.get(EMOJIS[t.value]);
+      const present = new Set();
+      if (reaction) {
+        const users = await reaction.users.fetch();
+        for (const u of users.values()) if (!u.bot) present.add(u.id);
+      }
+      const roleId = this.roleFor(t.value);
+      for (const id of present) {
+        if (await this.subscribe(t.value, id)) {
+          if (roleId) await message.guild.members.fetch(id).then((m) => m.roles.add(roleId)).catch(() => {});
+        }
+      }
+      for (const id of this.subscribers(t.value)) {
+        if (present.has(id)) continue;
+        await this.unsubscribe(t.value, id);
+        if (roleId) await message.guild.members.fetch(id).then((m) => m.roles.remove(roleId)).catch(() => {});
+      }
+    }
   }
 
   logForEmoji(name) {
