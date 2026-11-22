@@ -20,6 +20,17 @@ Nothing is posted to a log until you set its channel.
 
 **It survives redeploys:** the channel, message and subscribers are saved. On every start the bot finds the message, refreshes its text, re-adds its own reactions, re-posts it if it was deleted, and catches up on reactions added or removed while it was offline. This needs `MONGO_URI`; without it Render wipes the saved data on redeploy and you must run `/reactionrole set` again.
 
+### Roblox profile lookup
+
+`/profile tracker panel channel:#channel` posts a permanent panel with a **Search Roblox User** button. Anyone can press it; a pop-up asks for **one thing only, the Roblox username**. The result is a private (ephemeral) profile card with the avatar on the right: username, display name, Verified, followers / following / friends, description, Roblox badges (each name links to its icon), created date, user ID, status, last online, RAP, value, and **View Profile** and **Refresh** buttons.
+The panel is saved and re-posted if deleted, and its buttons keep working after redeploys.
+
+Where each value comes from, and when it says **Unavailable** (nothing is ever guessed):
+- **Roblox public APIs**: name, display name, verified, description, created date, ID, avatar, followers / following / friends, Roblox badges.
+- **Rolimons** (`api.rolimons.com`, a community site): **RAP, value** and a "last online" time. Only for accounts Rolimons tracks with a public inventory. Rolimons' last-online is when *it* last saw the account, so it is labelled "(Rolimons)" and can be old.
+- **Online status**: Roblox hides this from logged-out requests, so it shows **Unavailable** unless you set `ROBLOX_COOKIE` (an optional `.ROBLOSECURITY` cookie, ideally from a throwaway account; it is only sent to Roblox and never logged or stored). Users with privacy settings still show Offline.
+- Invalid names, unknown accounts, rate limits and Roblox outages each get a clear private message. Results are cached for 30 seconds and each person can search or refresh once every 5 seconds, to stay under Roblox's rate limits.
+
 ### Message mirror
 
 The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments). When the original is sent the bot reacts with a check mark. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
@@ -35,6 +46,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 | `/setup clear action` | owner | Stop posting a log. |
 | `/setup role service [role]` | owner | Role pinged for incidents on a service (or "All alerts"). Leave `role` empty to remove it. |
 | `/reactionrole set channel_id` | owner | Post the reaction message in a channel (kept up to date automatically). |
+| `/profile tracker panel channel` | owner | Post the permanent **Search Roblox User** panel in a channel (see below). |
 | `/channel create` | owner | Create a chat, voice, announcement, stage or forum channel (`name`, `action`, `type`; optional `category`, `allowed_roles`, `duration` and 19 allow/deny permission options). `type: Temporary` needs a `duration` (`1m`, `1h`, `1d`, `1w`, `1mo`, `1year`) and the bot deletes the channel when it is up, also after a redeploy (needs `MONGO_URI`). With `allowed_roles` the channel is hidden from everyone else. Needs Manage Channels. |
 | `/botstatus` | owner | Uptime, Discord ping, database, last good Roblox check, direct checks, news feeds, logs set up. |
 
@@ -82,12 +94,13 @@ Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on 
 | `NEWS_ENABLED` | `true` | Turn Roblox news on/off. |
 | `NEWS_POLL_MINUTES` | `30` | News check frequency (min 5). |
 | `NEWS_FEEDS` | Roblox Blog, DevForum Updates | `Name=https://feed-url,...` |
+| `ROBLOX_COOKIE` | | Optional. Lets the profile lookup show online status. |
 | `MIRROR_ENABLED` | `true` | Turn the message mirror on/off. |
 | `MIRROR_CHANNEL_ID` | `1573743378368176148` | Channel to watch. |
 | `MIRROR_USER_ID` | `1219266886143967245` | Only this user's messages are copied. |
 | `MONGO_DB_NAME`, `DATA_DIR`, `HISTORY_LIMIT`, `ROBLOX_STATUS_API_URL`, `ROBLOX_STATUS_PAGE_URL` | | Advanced, see `.env.example`. |
 
-Old Python-bot variables (`ROBLOX_COOKIE`, `ROBLOX_GROUP_ID`, `PREMIUM_DESIGN_CHANNEL_ID`, `NON_PREMIUM_DESIGN_CHANNEL_ID`) and `STATUS_CHANNEL_ID` / `ALERT_CHANNEL_ID` are no longer used and can be deleted.
+Old Python-bot variables (`ROBLOX_GROUP_ID`, `PREMIUM_DESIGN_CHANNEL_ID`, `NON_PREMIUM_DESIGN_CHANNEL_ID`) and `STATUS_CHANNEL_ID` / `ALERT_CHANNEL_ID` are no longer used and can be deleted.
 
 ## Bandwidth (rough estimates, not measured on a live host)
 
@@ -120,6 +133,8 @@ src/services/tracker.js       status polling, alerts, live message, routing to l
 src/services/health.js        direct checks of roblox.com and the APIs
 src/services/news.js          Roblox news feeds
 src/services/reactionRoles.js reaction roles + DM subscribers
+src/services/robloxProfile.js  Roblox profile lookup (Roblox APIs + Rolimons)
+src/services/profilePanel.js   the permanent Search Roblox User panel
 src/services/tempChannels.js  temporary channels from /channel create
 src/services/mirror.js        message mirror (copy / edit / delete to Bot Updates)
 src/services/notifier.js      posts to the log channels (with retry)

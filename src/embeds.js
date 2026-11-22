@@ -346,7 +346,72 @@ function botStatusEmbed(info) {
   return embed.setTimestamp(new Date());
 }
 
+// ---------------------------------------------------------------------------------------
+// Roblox profile lookup
+// ---------------------------------------------------------------------------------------
+const NA = 'Unavailable';
+const num = (n) => (n == null ? NA : n.toLocaleString('en-US'));
+
+function profilePanelEmbed() {
+  return new EmbedBuilder()
+    .setTitle('Roblox profile lookup')
+    .setColor(0x00a2ff)
+    .setDescription(
+      'Look up any public Roblox account.\n\nPress **Search Roblox User**, type a username, and the result is shown only to you.',
+    );
+}
+
+function profileEmbed(p) {
+  const embed = new EmbedBuilder()
+    .setTitle(trim(p.displayName, 256))
+    .setURL(p.url)
+    .setColor(p.banned ? COLOR_RED : 0x00a2ff);
+
+  const head = [`**@${p.name}**${p.verified ? '  ·  Verified' : ''}`];
+  if (p.banned) head.push('This account is terminated.');
+  const about = p.description.trim() ? trim(p.description.trim(), 350).replace(/\n{2,}/g, '\n') : '*No description.*';
+  embed.setDescription(`${head.join('\n')}\n\n${about.split('\n').map((l) => `> ${l}`).join('\n')}`);
+
+  if (p.avatarUrl) embed.setThumbnail(p.avatarUrl); // shown on the right of the card
+
+  const r = p.rolimons;
+  const status = p.presence ? p.presence.status : NA;
+  // Last online: Roblox's own value when a login is configured, otherwise what Rolimons last saw.
+  let lastOnline = NA;
+  if (p.presence && p.presence.lastOnline) lastOnline = ts(p.presence.lastOnline, 'R');
+  else if (r && r.lastOnline) lastOnline = `${ts(r.lastOnline, 'R')} *(Rolimons)*`;
+
+  embed.addFields(
+    field('Followers', num(p.followers), true),
+    field('Following', num(p.following), true),
+    field('Friends', num(p.friends), true),
+    field('User ID', `\`${p.id}\``, true),
+    field('Created', p.created ? ts(p.created, 'D') : NA, true),
+    field('Status', status, true),
+    field('RAP', r ? (r.private ? 'Private' : num(r.rap)) : NA, true),
+    field('Value', r ? (r.private ? 'Private' : num(r.value)) : NA, true),
+    field('Last online', lastOnline, true),
+  );
+
+  let badges = NA;
+  if (p.badges) {
+    badges = p.badges.length
+      ? p.badges
+          .slice(0, 12)
+          .map((b) => (b.imageUrl ? `[${trim(b.name, 40)}](${b.imageUrl})` : trim(b.name, 40)))
+          .join(' · ')
+      : 'None';
+  }
+  embed.addFields(field(`Roblox badges${p.badges && p.badges.length ? ` (${p.badges.length})` : ''}`, badges));
+
+  const sources = ['Roblox', r ? 'Rolimons' : null].filter(Boolean).join(' · ');
+  const note = p.rateLimited ? ' · some data was rate limited, press Refresh later' : '';
+  return embed.setFooter({ text: `Data: ${sources}${note}` }).setTimestamp(new Date(p.fetchedAt));
+}
+
 module.exports = {
+  profileEmbed,
+  profilePanelEmbed,
   healthEmbed,
   newsEmbed,
   botNoticeEmbed,

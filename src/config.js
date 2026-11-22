@@ -103,6 +103,9 @@ const config = {
   mirrorChannelId: str('MIRROR_CHANNEL_ID', '1573743378368176148'),
   mirrorUserId: str('MIRROR_USER_ID', '1219266886143967245'),
 
+  // Optional. Only used for the Roblox profile lookup's online status (Roblox hides presence from logged-out requests).
+  robloxCookie: str('ROBLOX_COOKIE'),
+
   mongoUri: str('MONGO_URI'),
   mongoDb: str('MONGO_DB_NAME'),
   dataDir: str('DATA_DIR', './data'),

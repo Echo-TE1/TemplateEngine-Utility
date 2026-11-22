@@ -15,6 +15,8 @@ const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { ReactionRoles } = require('./src/services/reactionRoles');
 const { TempChannels } = require('./src/services/tempChannels');
+const { RobloxProfiles } = require('./src/services/robloxProfile');
+const { ProfilePanel } = require('./src/services/profilePanel');
 const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
 
@@ -72,6 +74,9 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   await serviceRoles.load();
   const tempChannels = new TempChannels({ client, store });
   await tempChannels.load();
+  const profiles = new RobloxProfiles({ cookie: config.robloxCookie });
+  const profilePanel = new ProfilePanel({ store, client, buildPayload: () => commands.get('profile').panelPayload() });
+  await profilePanel.load();
   const reactionRoles = new ReactionRoles({ store, client });
   await reactionRoles.load();
   const notifier = new Notifier({ logChannels, subscribers: reactionRoles });
@@ -85,7 +90,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, reactionRoles, tempChannels, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, reactionRoles, tempChannels, profiles, profilePanel, mirrorIntentRefused, startedAt };
 
   client.once(Events.ClientReady, async (ready) => {
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
@@ -108,6 +113,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
 
     // Make sure every log has its reaction role (creates any that are missing).
     await reactionRoles.ensureRoles(logChannels, config).catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
+    await profilePanel.ensure().catch((e) => console.warn(`[Profile] ${e.message}`));
     // Restore the reaction message (re-post if deleted) and catch up on reactions made while offline.
     await reactionRoles.ensureMessage().catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
 
@@ -119,6 +125,20 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     reactionRoles.handleAdd(reaction, user).catch((e) => console.error(`[ReactionRoles] add failed: ${e.message}`)));
   client.on(Events.MessageReactionRemove, (reaction, user) =>
     reactionRoles.handleRemove(reaction, user).catch((e) => console.error(`[ReactionRoles] remove failed: ${e.message}`)));
+
+  // Buttons and the modal of the Roblox profile lookup.
+  client.on(Events.InteractionCreate, async (interaction) => {
+    const isButton = interaction.isButton && interaction.isButton();
+    const isModal = interaction.isModalSubmit && interaction.isModalSubmit();
+    if (!(isButton || isModal) || !interaction.customId.startsWith('rp:')) return;
+    try {
+      const profile = commands.get('profile');
+      if (isButton) await profile.handleButton(interaction, context);
+      else await profile.handleModal(interaction, context);
+    } catch (error) {
+      console.error(`[Component Error] ${interaction.customId}: ${error.stack || error.message}`);
+    }
+  });
 
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
