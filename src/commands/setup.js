@@ -15,7 +15,8 @@ const fail = (title, text) => ({ embeds: [errorEmbed(title, text)] });
 // ---------------------------------------------------------------------------------------
 // /setup log
 // ---------------------------------------------------------------------------------------
-async function buildLog(interaction, { logChannels }, flags) {
+async function buildLog(interaction, context, flags) {
+  const { logChannels } = context;
   const type = interaction.options.getString('action', true);
   const label = labelFor(type);
   if (!label) return fail('Unknown Log', 'That log type does not exist.');
@@ -56,6 +57,9 @@ async function buildLog(interaction, { logChannels }, flags) {
     setAt: new Date().toISOString(),
   });
   trace(interaction, 'saved');
+  if (context.reactionRoles) {
+    context.reactionRoles.ensureRoles(logChannels, context.config).catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
+  }
 
   const changed = previous && previous !== channelId ? `\nPreviously: <#${previous}>` : '';
   const extra = LOG_DESCRIPTIONS[type] ? `\n${LOG_DESCRIPTIONS[type]}.` : '';

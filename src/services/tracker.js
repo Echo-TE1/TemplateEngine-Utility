@@ -118,9 +118,7 @@ class Tracker {
         }
         if (this.apiAlerted) {
           this.apiAlerted = false;
-          await this.notifier.post('bot_updates', {
-            embeds: [embeds.botNoticeEmbed('✅ Roblox status API reachable again', 'The bot can read Roblox\'s status data again.', 'ok')],
-          });
+          this.log.log('[Tracker] Roblox status API reachable again.');
         }
         this.failureSince = null;
       } catch (error) {
@@ -165,15 +163,7 @@ class Tracker {
     const after = this.config.botAlertAfterMinutes ?? 10;
     if (this.apiAlerted || minutes < after) return;
     this.apiAlerted = true;
-    await this.notifier.post('bot_updates', {
-      embeds: [
-        embeds.botNoticeEmbed(
-          '⚠️ Roblox status API unreachable',
-          `The bot has not been able to read Roblox's status data for about ${Math.round(minutes)} minutes, so the live status may be out of date.\n\`${error.message}\``,
-          'bad',
-        ),
-      ],
-    });
+    this.log.warn(`[Tracker] Roblox status API unreachable for about ${Math.round(minutes)} minutes: ${error.message}`);
   }
 
   #ago(iso) {

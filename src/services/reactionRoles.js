@@ -61,6 +61,56 @@ class ReactionRoles {
     await this.#save();
   }
 
+  /** The server the roles live in: the reaction message's, else any log channel's, else the mirror channel's. */
+  async #guild(logChannels, config) {
+    const ids = [];
+    if (this.message) ids.push(this.message.channelId);
+    for (const t of LOG_TYPES) ids.push(logChannels.get(t.value));
+    if (config && config.mirrorChannelId) ids.push(config.mirrorChannelId);
+    for (const id of ids.filter(Boolean)) {
+      try {
+        const channel = this.client.channels.cache.get(id) || (await this.client.channels.fetch(id));
+        if (channel && channel.guild) return channel.guild;
+      } catch {
+        // try the next one
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Makes sure every log has a role. A role that was deleted is recreated; an existing role with the
+   * right name is reused instead of making a duplicate. New logs get their role automatically.
+   * @returns {Promise<string[]>} names of the roles that were created
+   */
+  async ensureRoles(logChannels, config) {
+    const guild = await this.#guild(logChannels, config);
+    if (!guild) {
+      this.log.warn('[ReactionRoles] No server found yet, so no roles were created. Set a log channel with /setup log first.');
+      return [];
+    }
+    const existing = await guild.roles.fetch();
+    const created = [];
+    for (const type of LOG_TYPES) {
+      const current = this.roles[type.value];
+      if (current && existing.has(current)) continue;
+      const name = `${type.name} Alerts`;
+      let role = [...existing.values()].find((r) => r.name === name);
+      if (!role) {
+        try {
+          role = await guild.roles.create({ name, mentionable: false, reason: 'Reaction role for the bot logs' });
+          created.push(name);
+        } catch (error) {
+          this.log.warn(`[ReactionRoles] could not create "${name}": ${error.message} (the bot needs Manage Roles)`);
+          continue;
+        }
+      }
+      await this.setRole(type.value, role.id);
+    }
+    if (created.length) this.log.log(`[ReactionRoles] Created roles: ${created.join(', ')}`);
+    return created;
+  }
+
   logForEmoji(name) {
     return Object.keys(EMOJIS).find((type) => EMOJIS[type] === name) || null;
   }

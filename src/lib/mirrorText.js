@@ -44,7 +44,6 @@ function mirrorEmbed(message, { edited = false } = {}) {
   };
   const image = files.find((f) => f.isImage);
   if (image) embed.image = { url: image.url };
-  if (message.url) embed.fields = [{ name: 'Original', value: `[Jump to message](${message.url})` }];
   return embed;
 }
 

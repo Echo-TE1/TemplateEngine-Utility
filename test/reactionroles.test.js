@@ -102,3 +102,32 @@ test('settings persist; Notifier DMs after a successful channel post only', asyn
   await new Promise((r) => setImmediate(r));
   assert.equal(w.dms.length, 1); // delivered once, after the retry worked
 });
+
+test('ensureRoles creates a role per log, reuses by name, recreates deleted ones, is idempotent', async () => {
+  const store = tmp();
+  const roles = new Map([['x1', { id: 'x1', name: 'API Status Alerts' }]]);
+  let n = 0;
+  const guild = {
+    roles: {
+      fetch: async () => roles,
+      create: async ({ name }) => { const r = { id: `new${++n}`, name }; roles.set(r.id, r); return r; },
+    },
+  };
+  const client = { channels: { cache: new Map(), fetch: async () => ({ guild }) } };
+  const rr = new ReactionRoles({ store, client, log: quiet });
+  const logChannels = { get: (t) => (t === 'bot_updates' ? 'chan' : null) };
+
+  const created = await rr.ensureRoles(logChannels, {});
+  assert.equal(created.length, 4); // API Status reused by name
+  assert.equal(rr.roleFor('api_status'), 'x1');
+  assert.equal(rr.roleFor('game_updates') !== null, true);
+  assert.deepEqual(await rr.ensureRoles(logChannels, {}), []);
+
+  roles.delete(rr.roleFor('game_updates')); // someone deleted it
+  assert.deepEqual(await rr.ensureRoles(logChannels, {}), ['Game Updates Alerts']);
+});
+
+test('ensureRoles does nothing (and does not throw) when no server is known yet', async () => {
+  const rr = new ReactionRoles({ store: tmp(), client: { channels: { cache: new Map(), fetch: async () => null } }, log: quiet });
+  assert.deepEqual(await rr.ensureRoles({ get: () => null }, {}), []);
+});

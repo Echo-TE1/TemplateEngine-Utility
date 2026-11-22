@@ -13,7 +13,6 @@ const { ServiceRoles } = require('./src/services/serviceRoles');
 const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
-const { BackupScheduler } = require('./src/services/backup');
 const { ReactionRoles } = require('./src/services/reactionRoles');
 const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
@@ -76,7 +75,6 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   const tracker = new Tracker({ client, store, config, logChannels, serviceRoles, notifier });
   const health = config.healthEnabled ? new HealthMonitor({ store, config, notifier }) : null;
   const news = config.newsEnabled ? new NewsWatcher({ store, config, notifier }) : null;
-  const backups = new BackupScheduler({ store, logChannels, serviceRoles, notifier, config });
   const mirror = messageContent ? new MessageMirror({ store, logChannels, config }) : null;
   if (mirror) {
     await mirror.load();
@@ -103,25 +101,12 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     notifier.start();
     if (health) await health.start();
     if (news) await news.start();
-    backups.start();
 
-    // Tell the Bot Updates log that the bot is up (and warn if its database is not permanent).
-    const warnings = [];
-    if (store.fellBack) warnings.push('MongoDB could not be reached, so local files are used. Settings and history are lost on redeploy.');
-    else if (!store.persistent) warnings.push('No MONGO_URI is set, so settings and history are lost on redeploy.');
-    if (mirrorIntentRefused) warnings.push('Message mirror is OFF: enable the Message Content Intent in the Discord Developer Portal, then redeploy.');
-    else if (mirror && !logChannels.get('bot_updates')) warnings.push('Message mirror needs a Bot Updates channel (/setup log).');
-    const commit = (process.env.RENDER_GIT_COMMIT || '').slice(0, 7);
-    await notifier.post('bot_updates', {
-      embeds: [
-        botNoticeEmbed(
-          '🟢 Bot started',
-          `Storage: ${store.kind}${commit ? ` • Version ${commit}` : ''}\nRoblox status checked every ${config.pollSeconds}s.` +
-            (warnings.length ? `\n\n⚠️ ${warnings.join('\n⚠️ ')}` : ''),
-          warnings.length ? 'warn' : 'ok',
-        ),
-      ],
-    });
+    // Make sure every log has its reaction role (creates any that are missing).
+    await reactionRoles.ensureRoles(logChannels, config).catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
+
+    // Bot Updates only gets redeploy notices and mirrored messages.
+    await notifier.post('bot_updates', { embeds: [botNoticeEmbed('🟢 Bot redeployed', 'The bot restarted and is running.', 'ok')] });
   });
 
   client.on(Events.MessageReactionAdd, (reaction, user) =>
@@ -178,7 +163,6 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     notifier.stop();
     if (health) health.stop();
     if (news) news.stop();
-    backups.stop();
     try {
       await store.close();
     } catch {

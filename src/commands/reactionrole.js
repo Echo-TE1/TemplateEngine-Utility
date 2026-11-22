@@ -28,7 +28,7 @@ function panel(reactionRoles) {
     color: 0x5865f2,
     title: '🎭 Reaction roles',
     description:
-      'Pick the role people get for each log. Then run `/reactionrole post` to publish the reaction message.\n' +
+      'Roles are created automatically for every log; change which role each log uses here. Then run `/reactionrole post` to publish the reaction message.\n' +
       'Reacting gives the role **and** makes the bot DM that person when something is posted to the log.\n\n' +
       lines.join('\n') +
       '\n\n*Clear a picker to remove its role.*',
@@ -81,12 +81,16 @@ module.exports = {
     const rr = context.reactionRoles;
 
     if (interaction.options.getSubcommand() === 'set') {
-      return interaction.reply(panel(rr));
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await rr.ensureRoles(context.logChannels, context.config).catch(() => {});
+      const { flags, ...body } = panel(rr);
+      return interaction.editReply(body);
     }
 
     // post
     const channelId = interaction.options.getString('channel_id', true).trim().replace(/^<#(\d+)>$/, '$1');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await rr.ensureRoles(context.logChannels, context.config).catch(() => {});
     let channel = null;
     try {
       channel = await interaction.client.channels.fetch(channelId);

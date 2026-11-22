@@ -10,18 +10,18 @@ A small Node.js / discord.js bot that watches Roblox and tells your server when 
 | **Website Status** | Website incidents and changes from Roblox's status page, plus our own direct check of `roblox.com`. |
 | **API Status** | Incidents and changes for every other Roblox service, plus direct checks of the login, users and games APIs. |
 | **Game Updates** | Roblox-wide news: platform updates, events and announcements (Roblox Blog and DevForum Updates feeds). |
-| **Bot Updates** | Bot started, Roblox status API unreachable / back, database warnings, and a daily backup file. |
+| **Bot Updates** | Only two things: a "Bot redeployed" notice each time the bot starts, and the message mirror (below). |
 
 Nothing is posted to a log until you set its channel.
 
 ### Reaction roles and private alerts
 
-`/reactionrole set` (owner) opens a private panel with one role picker per log. `/reactionrole post channel_id:<id>` posts the reaction message (📡 Platform Status, 🌐 Website Status, ⚙️ API Status, 🎮 Game Updates, 🤖 Bot Updates). When someone reacts they get that log's role (if you picked one) and the bot **DMs them, mentioning them, whenever something is posted to that log** (new alerts, updates, recoveries, news). Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
+**Roles are created automatically**: on every start (and whenever you run `/setup log`, `/reactionrole set` or `post`) the bot creates a `<Log> Alerts` role for every log that lacks one, reusing a role with that name if it exists and recreating one that was deleted. New logs get theirs the same way. (The bot needs **Manage Roles**.) `/reactionrole set` (owner) opens a private panel with one role picker per log. `/reactionrole post channel_id:<id>` posts the reaction message (📡 Platform Status, 🌐 Website Status, ⚙️ API Status, 🎮 Game Updates, 🤖 Bot Updates). When someone reacts they get that log's role (if you picked one) and the bot **DMs them, mentioning them, whenever something is posted to that log** (new alerts, updates, recoveries, news). Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
 Needs: Manage Roles with the bot's role above the roles you pick, Add Reactions in the channel, and people must have DMs from server members open. The daily backup file is never DMed, and the live status message edits are not DMed (only new posts). Re-run `/reactionrole post` after changing roles to refresh the text; the old message stops working.
 
 ### Message mirror
 
-The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments, link to the original). When the original is sent the bot reacts with ✅. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
+The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments). When the original is sent the bot reacts with ✅. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
 Needs: the **Message Content Intent** switched on in the Discord Developer Portal (Bot > Privileged Gateway Intents), and in the watched channel the bot needs View Channel, Read Message History and Add Reactions. If Discord refuses the intent the bot still starts, with the mirror off and a warning in Bot Updates and `/botstatus`. The copy links are saved (last 500), so edits and deletes still work after a restart. Change the channel/user with `MIRROR_CHANNEL_ID` / `MIRROR_USER_ID`, or turn it off with `MIRROR_ENABLED=false`.
 
 ## Commands
@@ -35,7 +35,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 | `/setup role service [role]` | owner | Role pinged for incidents on a service (or "All alerts"). Leave `role` empty to remove it. |
 | `/reactionrole set` / `post` | owner | Choose a role per log, then post the reaction message that subscribes people to DMs. |
 | `/botstatus` | owner | Uptime, Discord ping, database, last good Roblox check, direct checks, news feeds, logs set up. |
-| `/backup` | owner | Download everything the bot remembers as a JSON file (no tokens or secrets in it). |
+| `/backup` | owner | Download everything the bot remembers as a JSON file (only on request; no longer posted daily) (no tokens or secrets in it). |
 
 "Owner" is the user in `BOT_OWNER_ID` (default `1219266886143967245`). Everyone else gets a private "Permission Denied". Owner commands reply privately.
 
@@ -81,11 +81,9 @@ Without `MONGO_URI` the bot uses local files, which Render's free plan wipes on 
 | `NEWS_ENABLED` | `true` | Turn Roblox news on/off. |
 | `NEWS_POLL_MINUTES` | `30` | News check frequency (min 5). |
 | `NEWS_FEEDS` | Roblox Blog, DevForum Updates | `Name=https://feed-url,...` |
-| `BOT_ALERT_AFTER_MINUTES` | `10` | Minutes the status API must be unreachable before Bot Updates is told. |
 | `MIRROR_ENABLED` | `true` | Turn the message mirror on/off. |
 | `MIRROR_CHANNEL_ID` | `1573743378368176148` | Channel to watch. |
 | `MIRROR_USER_ID` | `1219266886143967245` | Only this user's messages are copied. |
-| `BACKUP_DAILY` | `true` | Post a backup file to Bot Updates once a day (after midnight JST). |
 | `MONGO_DB_NAME`, `DATA_DIR`, `HISTORY_LIMIT`, `ROBLOX_STATUS_API_URL`, `ROBLOX_STATUS_PAGE_URL` | | Advanced, see `.env.example`. |
 
 Old Python-bot variables (`ROBLOX_COOKIE`, `ROBLOX_GROUP_ID`, `PREMIUM_DESIGN_CHANNEL_ID`, `NON_PREMIUM_DESIGN_CHANNEL_ID`) and `STATUS_CHANNEL_ID` / `ALERT_CHANNEL_ID` are no longer used and can be deleted.
@@ -108,7 +106,7 @@ To cut it: raise `POLL_INTERVAL_SECONDS` (300 = 5x less), `HEALTH_INTERVAL_SECON
 - A service change is not announced separately when an incident that covers it starts in the same check.
 - Direct checks need 2 failures to go down and 2 successes to recover.
 - Only one status check runs at a time; failed posts are retried up to 3 times.
-- If Roblox's status API is unreachable, nothing is announced; the live message gets a warning after 3 failed checks, and Bot Updates is told after `BOT_ALERT_AFTER_MINUTES`.
+- If Roblox's status API is unreachable, nothing is announced; the live message gets a warning after 3 failed checks. Problems are shown by `/botstatus`, not posted anywhere.
 
 ## Project layout
 
