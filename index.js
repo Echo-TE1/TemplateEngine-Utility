@@ -112,7 +112,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     await reactionRoles.ensureMessage().catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
 
     // Bot Updates only gets redeploy notices and mirrored messages.
-    await notifier.post('bot_updates', { embeds: [botNoticeEmbed('🟢 Bot redeployed', 'The bot restarted and is running.', 'ok')] });
+    await notifier.post('bot_updates', { embeds: [botNoticeEmbed('Bot redeployed', 'The bot restarted and is running.', 'ok')] });
   });
 
   client.on(Events.MessageReactionAdd, (reaction, user) =>

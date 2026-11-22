@@ -25,16 +25,16 @@ function trackedLines(snap) {
     if (matched.length) {
       const level = worst(matched.map((s) => s.level));
       const m = meta(level);
-      if (level === 'operational') return `${m.emoji} **${term}** — Operational`;
+      if (level === 'operational') return `${m.mark} **${term}** — Operational`;
       const where = [...new Set(matched.filter((s) => s.level === level).map((s) => s.group))];
-      return `${m.emoji} **${term}** — ${m.label} (${where.join(', ')})`;
+      return `${m.mark} **${term}** — ${m.label} (${where.join(', ')})`;
     }
 
     // Not a component on Roblox's status page: judged by the incidents that mention it.
     const mentioned = snap.incidents.some((i) => i.trackedTerms.includes(term));
     return mentioned
-      ? `🟠 **${term}** — Incident reported`
-      : `🟢 **${term}** — No incidents reported`;
+      ? `! **${term}** — Incident reported`
+      : `✓ **${term}** — No incidents reported`;
   });
 }
 
@@ -49,7 +49,7 @@ function boardEmbed(snap, ctx, warning = null) {
     .setTitle('Roblox Status')
     .setURL(ctx.statusPageUrl)
     .setColor(overall.color)
-    .setDescription(`${overall.emoji} **${headline}**${warning ? `\n\n⚠️ ${warning}` : ''}`)
+    .setDescription(`${overall.mark} **${headline}**${warning ? `\n\n! ${warning}` : ''}`)
     .addFields(field('Tracked Services', trackedLines(snap).join('\n')));
 
   if (snap.incidents.length) {
@@ -58,7 +58,7 @@ function boardEmbed(snap, ctx, warning = null) {
       .map((i) => {
         const latest = i.messages[i.messages.length - 1];
         return (
-          `${meta(i.level).emoji} **${trim(i.name, 80)}**\n` +
+          `${meta(i.level).mark} **${trim(i.name, 80)}**\n` +
           `${stateLabel(latest && latest.state)} • started ${ts(i.openedAt, 'R')} • ${servicesText(i)}`
         );
       })
@@ -72,7 +72,7 @@ function boardEmbed(snap, ctx, warning = null) {
   const maintenance = [...snap.maintenance.active, ...snap.maintenance.upcoming].slice(0, 3);
   if (maintenance.length) {
     const text = maintenance
-      .map((m) => `🔧 **${trim(m.name, 80)}**\n${ts(m.plannedStart, 'f')} → ${ts(m.plannedEnd, 't')}`)
+      .map((m) => `~ **${trim(m.name, 80)}**\n${ts(m.plannedStart, 'f')} → ${ts(m.plannedEnd, 't')}`)
       .join('\n\n');
     embed.addFields(field('Maintenance', text));
   }
@@ -82,14 +82,14 @@ function boardEmbed(snap, ctx, warning = null) {
   if (broken.length) {
     const shown = broken
       .slice(0, 15)
-      .map((s) => `${meta(s.level).emoji} **${s.group} / ${s.name}** — ${meta(s.level).label}`);
+      .map((s) => `${meta(s.level).mark} **${s.group} / ${s.name}** — ${meta(s.level).label}`);
     const more = broken.length > 15 ? `\n…and ${broken.length - 15} more` : '';
     embed.addFields(field(`Not Operational (${broken.length})`, shown.join('\n') + more));
 
     const working = snap.services.filter((s) => s.level === 'operational');
     const byGroup = new Map();
     for (const s of working) byGroup.set(s.group, [...(byGroup.get(s.group) || []), s.name]);
-    const lines = [...byGroup].map(([group, names]) => `🟢 **${group}**: ${names.join(', ')}`);
+    const lines = [...byGroup].map(([group, names]) => `✓ **${group}**: ${names.join(', ')}`);
     embed.addFields(field(`Operational (${working.length})`, lines.join('\n') || 'None'));
   }
 
@@ -105,7 +105,7 @@ function incidentOpenEmbed(incident, ctx) {
   const m = meta(incident.level);
   const latest = incident.messages[incident.messages.length - 1];
   return new EmbedBuilder()
-    .setTitle(trim(`${m.emoji} Roblox Incident: ${incident.name}`, 256))
+    .setTitle(trim(`${m.mark} Roblox Incident: ${incident.name}`, 256))
     .setURL(ctx.statusPageUrl)
     .setColor(m.color)
     .setDescription(trim((latest && latest.details) || 'No details have been posted yet.', 1800))
@@ -125,7 +125,7 @@ function incidentUpdateEmbed(incident, updates, ctx) {
     .map((u) => `**${stateLabel(u.state)}** — ${ts(u.datetime, 'R')}\n${trim(u.details, 900)}`)
     .join('\n\n');
   return new EmbedBuilder()
-    .setTitle(trim(`🔄 Update: ${incident.name}`, 256))
+    .setTitle(trim(`Update: ${incident.name}`, 256))
     .setURL(ctx.statusPageUrl)
     .setColor(m.color)
     .setDescription(trim(body || 'The incident was updated.', 3000))
@@ -142,7 +142,7 @@ function incidentResolvedEmbed(record, resolvedAt, ctx) {
   const started = Date.parse(record.openedAt);
   const last = record.updates && record.updates[record.updates.length - 1];
   return new EmbedBuilder()
-    .setTitle(trim(`✅ Resolved: ${record.name}`, 256))
+    .setTitle(trim(`Resolved: ${record.name}`, 256))
     .setURL(ctx.statusPageUrl)
     .setColor(meta('operational').color)
     .setDescription(
@@ -166,9 +166,9 @@ function serviceChangeEmbed(changes, ctx) {
   const level = worst(changes.map((c) => c.to));
   const lines = changes
     .slice(0, 20)
-    .map((c) => `${meta(c.to).emoji} **${c.group} / ${c.name}** — ${meta(c.from).label} → ${meta(c.to).label}`);
+    .map((c) => `${meta(c.to).mark} **${c.group} / ${c.name}** — ${meta(c.from).label} → ${meta(c.to).label}`);
   return new EmbedBuilder()
-    .setTitle(allRecovered ? '🟢 Roblox services recovered' : '⚠️ Roblox service status changed')
+    .setTitle(allRecovered ? 'Roblox services recovered' : 'Roblox service status changed')
     .setURL(ctx.statusPageUrl)
     .setColor(allRecovered ? meta('operational').color : meta(level).color)
     .setDescription(trim(lines.join('\n'), 3500))
@@ -180,7 +180,7 @@ function serviceChangeEmbed(changes, ctx) {
 // ---------------------------------------------------------------------------------------
 function historyEmbed(records, ctx) {
   const embed = new EmbedBuilder()
-    .setTitle('📜 Roblox Incident History')
+    .setTitle('Roblox incident history')
     .setURL(ctx.statusPageUrl)
     .setColor(COLOR_GREY)
     .setTimestamp(new Date());
@@ -224,7 +224,7 @@ function healthEmbed({ target, change, result, state }) {
   if (change === 'down') {
     const reason = result.error || (result.httpStatus ? `HTTP ${result.httpStatus}` : 'no answer');
     return new EmbedBuilder()
-      .setTitle(trim(`🔴 ${target.name} is not responding`, 256))
+      .setTitle(trim(`${target.name} is not responding`, 256))
       .setColor(meta('outage').color)
       .setDescription(
         `Our own check of \`${host}\` failed ${state.fails} times in a row.\n` +
@@ -239,7 +239,7 @@ function healthEmbed({ target, change, result, state }) {
   }
   const since = Date.parse(state.lastDownSince);
   return new EmbedBuilder()
-    .setTitle(trim(`🟢 ${target.name} is back`, 256))
+    .setTitle(trim(`${target.name} is back`, 256))
     .setColor(meta('operational').color)
     .setDescription(`\`${host}\` is answering again.`)
     .addFields(
@@ -276,7 +276,7 @@ function botNoticeEmbed(title, description, level = 'ok') {
 // Uptime, /setup view, /botstatus
 // ---------------------------------------------------------------------------------------
 function uptimeEmbed(stats, ctx) {
-  const dot = (pct) => (pct >= 99.9 ? '🟢' : pct >= 99 ? '🟡' : '🔴');
+  const dot = (pct) => (pct >= 99.9 ? '✓' : pct >= 99 ? '!' : '✕');
   const o = stats.overall;
   const lines = stats.services
     .slice(0, 15)
@@ -286,7 +286,7 @@ function uptimeEmbed(stats, ctx) {
         (s.downMs ? ` • ${duration(s.downMs)}` : ''),
     );
   return new EmbedBuilder()
-    .setTitle(`📈 Roblox uptime — last ${stats.days} day${stats.days === 1 ? '' : 's'}`)
+    .setTitle(`Roblox uptime, last ${stats.days} day${stats.days === 1 ? '' : 's'}`)
     .setURL(ctx.statusPageUrl)
     .setColor(COLOR_GREY)
     .setDescription(
@@ -303,11 +303,11 @@ function uptimeEmbed(stats, ctx) {
 function logViewEmbed(rows, roles) {
   const lines = rows.map(({ label, description, entry }) =>
     entry
-      ? `✅ **${label}** → <#${entry.channelId}>\n${description}`
-      : `⬜ **${label}** — not set\n${description}`,
+      ? `✓ **${label}** → <#${entry.channelId}>\n${description}`
+      : `· **${label}** — not set\n${description}`,
   );
   const embed = new EmbedBuilder()
-    .setTitle('⚙️ Log channels')
+    .setTitle('Log channels')
     .setColor(COLOR_GREY)
     .setDescription(trim(lines.join('\n\n'), 4000));
   const roleLines = roles.map((r) => `**${r.service === '*' ? 'All alerts' : r.service}** → <@&${r.roleId}>`);
@@ -316,10 +316,10 @@ function logViewEmbed(rows, roles) {
 }
 
 function botStatusEmbed(info) {
-  const yes = '✅';
-  const no = '❌';
+  const yes = '✓';
+  const no = '✕';
   const embed = new EmbedBuilder()
-    .setTitle('🤖 Bot status')
+    .setTitle('Bot status')
     .setColor(info.problems ? meta('degraded').color : meta('operational').color)
     .addFields(
       field('Uptime', info.uptime, true),
@@ -330,13 +330,13 @@ function botStatusEmbed(info) {
       field(
         'Direct checks',
         info.health.length
-          ? info.health.map((h) => `${h.ok === null ? '⏳' : h.ok ? yes : no} **${h.name}** — ${h.text}`).join('\n')
+          ? info.health.map((h) => `${h.ok === null ? '…' : h.ok ? yes : no} **${h.name}** — ${h.text}`).join('\n')
           : 'Disabled',
       ),
       field(
         'News feeds',
         info.news.length
-          ? info.news.map((n) => `${n.ok === null ? '⏳' : n.ok ? yes : no} **${n.name}** — ${n.text}`).join('\n')
+          ? info.news.map((n) => `${n.ok === null ? '…' : n.ok ? yes : no} **${n.name}** — ${n.text}`).join('\n')
           : 'Disabled',
       ),
       field('Logs set up', info.logs),

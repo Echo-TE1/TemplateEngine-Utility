@@ -49,7 +49,7 @@ test('other messages, other emojis and bots are ignored; no role set still subsc
   const rr = new ReactionRoles({ store: tmp(), client: w.client, log: quiet });
   await rr.setMessage('c', 'M');
   await rr.handleAdd(w.reaction(EMOJIS.api_status, 'OTHER'), w.user('a'));
-  await rr.handleAdd(w.reaction('👍'), w.user('b'));
+  await rr.handleAdd(w.reaction('\u{1F44D}'), w.user('b'));
   await rr.handleAdd(w.reaction(EMOJIS.api_status), { ...w.user('bot'), bot: true });
   assert.deepEqual(rr.subscribers('api_status'), []);
   await rr.handleAdd(w.reaction(EMOJIS.api_status), w.user('c'));

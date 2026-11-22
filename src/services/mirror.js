@@ -4,11 +4,11 @@ const { mirrorEmbed } = require('../lib/mirrorText');
 
 const DOC = 'mirror';
 const MAX_LINKS = 500; // remembered source -> copy pairs
-const CHECK = '✅';
+const CHECK = '\u2705'; // the check mark reaction (a reaction must be an emoji)
 
 /**
  * Copies messages from one user in one channel into the Bot Updates log.
- *  - new message  -> posted, then the original gets a ✅ reaction
+ *  - new message  -> posted, then the original gets a check-mark reaction
  *  - edited       -> the copy is edited
  *  - deleted      -> the copy is deleted
  * Events are handled one at a time, in order, so an edit can never overtake the post it edits.
@@ -72,7 +72,7 @@ class MessageMirror {
   }
 
   async #post(message) {
-    if (!this.logChannels.get('bot_updates')) return; // Bot Updates not set: nothing to do, no ✅
+    if (!this.logChannels.get('bot_updates')) return; // Bot Updates not set: nothing to do, no check mark
     const sent = await this.logChannels.send('bot_updates', {
       embeds: [mirrorEmbed(message)],
       allowedMentions: { parse: [] },

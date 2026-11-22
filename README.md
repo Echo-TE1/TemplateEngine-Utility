@@ -16,13 +16,13 @@ Nothing is posted to a log until you set its channel.
 
 ### Reaction roles and private alerts
 
-**Roles are created automatically**: on every start (and whenever you run `/setup log`, `/reactionrole set` or `post`) the bot creates a `<Log> Alerts` role for every log that lacks one, reusing a role with that name if it exists and recreating one that was deleted. New logs get theirs the same way. (The bot needs **Manage Roles**.) `/reactionrole set channel_id:<id>` (owner) posts the reaction message (📡 Platform Status, 🌐 Website Status, ⚙️ API Status, 🎮 Game Updates, 🤖 Bot Updates). When someone reacts they get that log's role and the bot **DMs them, mentioning them, whenever something is posted to that log**. Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
+**Roles are created automatically**: on every start (and whenever you run `/setup log`, `/reactionrole set` or `post`) the bot creates a `<Log> Alerts` role for every log that lacks one, reusing a role with that name if it exists and recreating one that was deleted. New logs get theirs the same way. (The bot needs **Manage Roles**.) `/reactionrole set channel_id:<id>` (owner) posts the reaction message (one reaction per log). When someone reacts they get that log's role and the bot **DMs them, mentioning them, whenever something is posted to that log**. Removing the reaction removes the role and the DMs. Nobody gets pinged in the channel for this.
 
 **It survives redeploys:** the channel, message and subscribers are saved. On every start the bot finds the message, refreshes its text, re-adds its own reactions, re-posts it if it was deleted, and catches up on reactions added or removed while it was offline. This needs `MONGO_URI`; without it Render wipes the saved data on redeploy and you must run `/reactionrole set` again.
 
 ### Message mirror
 
-The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments). When the original is sent the bot reacts with ✅. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
+The bot watches channel `1573743378368176148` for messages from user `1219266886143967245` and copies each one into the **Bot Updates** channel (author, text, attachments). When the original is sent the bot reacts with a check mark. If you **edit** the original the copy is edited (shown as "Edited"); if you **delete** it the copy is deleted.
 Needs: the **Message Content Intent** switched on in the Discord Developer Portal (Bot > Privileged Gateway Intents), and in the watched channel the bot needs View Channel, Read Message History and Add Reactions. If Discord refuses the intent the bot still starts, with the mirror off (`/botstatus` shows why). The copy links are saved (last 500), so edits and deletes still work after a restart. Change the channel/user with `MIRROR_CHANNEL_ID` / `MIRROR_USER_ID`, or turn it off with `MIRROR_ENABLED=false`.
 
 ## Commands

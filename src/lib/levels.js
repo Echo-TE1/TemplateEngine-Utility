@@ -4,12 +4,12 @@
 const ORDER = ['operational', 'maintenance', 'degraded', 'partial', 'outage', 'security'];
 
 const META = {
-  operational: { emoji: '🟢', label: 'Operational', color: 0x2ecc71 },
-  maintenance: { emoji: '🔧', label: 'Maintenance', color: 0x3b82f6 },
-  degraded: { emoji: '🟡', label: 'Degraded', color: 0xf1c40f },
-  partial: { emoji: '🟠', label: 'Partial Outage', color: 0xe67e22 },
-  outage: { emoji: '🔴', label: 'Major Outage', color: 0xe74c3c },
-  security: { emoji: '🟣', label: 'Security Event', color: 0x8b5cf6 },
+  operational: { mark: '✓', label: 'Operational', color: 0x2ecc71 },
+  maintenance: { mark: '~', label: 'Maintenance', color: 0x3b82f6 },
+  degraded: { mark: '!', label: 'Degraded', color: 0xf1c40f },
+  partial: { mark: '!', label: 'Partial Outage', color: 0xe67e22 },
+  outage: { mark: '✕', label: 'Major Outage', color: 0xe74c3c },
+  security: { mark: '!', label: 'Security Event', color: 0x8b5cf6 },
 };
 
 // Status.io status codes.

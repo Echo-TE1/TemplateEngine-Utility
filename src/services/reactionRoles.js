@@ -4,13 +4,13 @@ const { LOG_TYPES, LOG_DESCRIPTIONS, labelFor } = require('./logChannels');
 
 const DOC = 'reactionroles';
 
-// One emoji per log, shown on the reaction-role message.
+// One reaction per log. Reactions can only be emoji, so they are written as escapes.
 const EMOJIS = {
-  platform_status: '📡',
-  website_status: '🌐',
-  api_status: '⚙️',
-  game_updates: '🎮',
-  bot_updates: '🤖',
+  platform_status: '\u{1F4E1}',
+  website_status: '\u{1F310}',
+  api_status: '\u2699\uFE0F',
+  game_updates: '\u{1F3AE}',
+  bot_updates: '\u{1F916}',
 };
 
 /**
@@ -121,7 +121,7 @@ class ReactionRoles {
       embeds: [
         {
           color: 0x5865f2,
-          title: '🔔 Get notified',
+          title: 'Get notified',
           description:
             'React to choose what you want to hear about. You get the role and the bot **DMs you** when it happens (make sure your DMs are open). Remove the reaction to stop.\n\n' +
             lines.join('\n'),
@@ -259,10 +259,10 @@ class ReactionRoles {
         embeds: [
           {
             color: 0x57f287,
-            title: `✅ Subscribed to ${label}`,
+            title: `Subscribed to ${label}`,
             description:
               `I will DM you when something is posted to **${label}**.\nRemove your reaction to stop.` +
-              (notes.length ? `\n\n⚠️ ${notes.join('\n⚠️ ')}` : ''),
+              (notes.length ? `\n\n${notes.map((n) => `! ${n}`).join('\n')}` : ''),
           },
         ],
         allowedMentions: { users: [user.id] },

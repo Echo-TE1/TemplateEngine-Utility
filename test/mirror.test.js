@@ -61,7 +61,7 @@ test('mirrors only the tracked user in the tracked channel, and reacts with a ch
   await mirror.onCreate(msg({ id: 'm3', channelId: 'elsewhere' }));
   await mirror.idle();
   assert.equal(posted.size, 1);
-  assert.deepEqual(a.reactions, ['✅']);
+  assert.deepEqual(a.reactions, ['\u2705']);
   assert.equal([...posted.values()][0].payload.embeds[0].description, 'hello');
   assert.deepEqual([...posted.values()][0].payload.allowedMentions, { parse: [] });
 });

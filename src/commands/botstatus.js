@@ -14,13 +14,13 @@ function collect(context, client) {
   let statusApi;
   if (tracker.lastSuccessAt) {
     const iso = new Date(tracker.lastSuccessAt).toISOString();
-    statusApi = `${tracker.failures ? '❌' : '✅'} Last good check ${ts(iso, 'R')} • every ${config.pollSeconds}s`;
+    statusApi = `${tracker.failures ? '✕' : '✓'} Last good check ${ts(iso, 'R')} • every ${config.pollSeconds}s`;
     if (tracker.failures) {
       problems = true;
       statusApi += `\n${tracker.failures} failed check(s) in a row`;
     }
   } else {
-    statusApi = '⏳ No successful check yet';
+    statusApi = '… No successful check yet';
     problems = problems || tracker.failures > 0;
   }
 
@@ -52,24 +52,24 @@ function collect(context, client) {
   let mirrorText = null;
   if (mirror) {
     const st = mirror.stats;
-    mirrorText = `✅ ${st.mirrored} copied • ${st.edited} edited • ${st.deleted} deleted`;
+    mirrorText = `✓ ${st.mirrored} copied • ${st.edited} edited • ${st.deleted} deleted`;
     if (st.lastError) {
       problems = true;
-      mirrorText = `❌ ${st.errors} error(s). Last: ${st.lastError}`;
+      mirrorText = `✕ ${st.errors} error(s). Last: ${st.lastError}`;
     }
   } else if (mirrorIntentRefused) {
     problems = true;
-    mirrorText = '❌ OFF: Message Content Intent is not enabled in the Developer Portal';
+    mirrorText = '✕ OFF: Message Content Intent is not enabled in the Developer Portal';
   } else if (!config.mirrorEnabled) {
     mirrorText = 'Disabled';
   }
 
   // Database
   let database = store.persistent
-    ? `✅ ${store.kind} (saved permanently)`
-    : `⚠️ ${store.kind} (lost when the host redeploys)`;
+    ? `✓ ${store.kind} (saved permanently)`
+    : `! ${store.kind} (lost when the host redeploys)`;
   if (store.fellBack) {
-    database = '❌ MongoDB could not be reached, so local files are used (lost on redeploy)';
+    database = '✕ MongoDB could not be reached, so local files are used (lost on redeploy)';
     problems = true;
   } else if (!store.persistent) {
     problems = true;

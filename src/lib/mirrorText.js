@@ -28,7 +28,7 @@ function mirrorEmbed(message, { edited = false } = {}) {
   const files = attachmentsOf(message);
   const lines = [];
   if (message.content) lines.push(message.content);
-  for (const f of files) lines.push(`📎 [${f.name}](${f.url})`);
+  for (const f of files) lines.push(`Attachment: [${f.name}](${f.url})`);
   if (!lines.length && (message.embeds || []).length) lines.push('*(message contains an embed)*');
 
   const created = message.createdTimestamp ? new Date(message.createdTimestamp) : new Date();
