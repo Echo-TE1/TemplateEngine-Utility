@@ -150,7 +150,7 @@ module.exports = {
               .setLabel('Roblox username')
               .setStyle(TextInputStyle.Short)
               .setMinLength(3)
-              .setMaxLength(20)
+              .setMaxLength(80) // room for @name or a pasted profile link
               .setRequired(true),
           ),
         );

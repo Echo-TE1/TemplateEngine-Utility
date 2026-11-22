@@ -14,7 +14,7 @@ const { Notifier } = require('./src/services/notifier');
 const { HealthMonitor } = require('./src/services/health');
 const { NewsWatcher } = require('./src/services/news');
 const { ReactionRoles } = require('./src/services/reactionRoles');
-const { editReply } = require('./src/lib/respond');
+const { editReply, withTimeout } = require('./src/lib/respond');
 const { MemberCountNote } = require('./src/services/memberCount');
 const { TempChannels } = require('./src/services/tempChannels');
 const { RobloxProfiles } = require('./src/services/robloxProfile');
@@ -100,34 +100,52 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   // Everything a command may need.
   const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, mirror, memberCount, reactionRoles, tempChannels, profiles, badgeEmojis, profilePanel, mirrorIntentRefused, startedAt };
 
+  // A startup step that can never crash or hang the bot: it is timed, logged and limited.
+  const step = async (name, fn, ms = 20_000) => {
+    const started = Date.now();
+    try {
+      await withTimeout(Promise.resolve().then(fn), ms, name);
+    } catch (error) {
+      console.warn(`[Startup] ${name}: ${error.message}`);
+      return;
+    }
+    const took = Date.now() - started;
+    if (took > 2000) console.log(`[Startup] ${name} took ${(took / 1000).toFixed(1)}s`);
+  };
+
   client.once(Events.ClientReady, async (ready) => {
+    const booted = Date.now();
     console.log(`[Ready] Logged in as ${ready.user.tag} (${ready.user.id})`);
 
-    try {
+    await step('Sync commands', async () => {
       const synced = await ready.application.commands.set(commands.map((c) => c.data.toJSON()));
       console.log(`[Sync] Synced ${synced.size} slash commands.`);
-    } catch (error) {
-      console.error(`[Sync Error] ${error.message}`);
-    }
+    });
 
     if (!logChannels.get('platform_status')) {
       console.warn('[Tracker] No Platform Status channel yet. Run /setup log action:Platform Status to start posting.');
     }
-    await tracker.start();
+
+    // The monitors start first, so a slow Discord lookup below can never delay them.
+    await step('Tracker', () => tracker.start(), 30_000);
     notifier.start();
     tempChannels.start();
     if (memberCount) memberCount.start();
-    if (health) await health.start();
-    if (news) await news.start();
+    if (health) await step('Health checks', () => health.start());
+    if (news) await step('News', () => news.start());
 
-    // Make sure every log has its reaction role (creates any that are missing).
-    await reactionRoles.ensureRoles(logChannels, config).catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
-    await profilePanel.ensure().catch((e) => console.warn(`[Profile] ${e.message}`));
-    // Restore the reaction message (re-post if deleted) and catch up on reactions made while offline.
-    await reactionRoles.ensureMessage().catch((e) => console.warn(`[ReactionRoles] ${e.message}`));
+    // Restore things that live in Discord, side by side: log roles, the profile panel and the reaction message.
+    await Promise.all([
+      step('Reaction roles', async () => {
+        await reactionRoles.ensureRoles(logChannels, config); // creates any missing log role
+        await reactionRoles.ensureMessage(); // re-posts the message if deleted, catches up on reactions
+      }),
+      step('Profile panel', () => profilePanel.ensure()),
+    ]);
 
     // Bot Updates only gets redeploy notices and mirrored messages.
-    await notifier.post('bot_updates', { embeds: [botNoticeEmbed('Bot redeployed', 'The bot restarted and is running.', 'ok')] });
+    await step('Redeploy notice', () => notifier.post('bot_updates', { embeds: [botNoticeEmbed('Bot redeployed', 'The bot restarted and is running.', 'ok')] }));
+    console.log(`[Ready] Startup finished in ${((Date.now() - booted) / 1000).toFixed(1)}s`);
   });
 
   client.on(Events.MessageReactionAdd, (reaction, user) =>

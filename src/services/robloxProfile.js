@@ -32,7 +32,7 @@ class RobloxProfiles {
   }
 
   static validUsername(text) {
-    const name = String(text || '').trim();
+    const name = String(text || '').trim().replace(/^@/, '');
     if (!USERNAME.test(name)) return null;
     if (name.startsWith('_') || name.endsWith('_') || (name.match(/_/g) || []).length > 1) return null;
     return name;
@@ -49,6 +49,9 @@ class RobloxProfiles {
 
   /** Username -> user id. */
   async resolveName(text) {
+    // A pasted profile link already contains the id.
+    const link = /roblox\.com\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?users\/(\d{1,19})/i.exec(String(text || ''));
+    if (link) return link[1];
     const name = RobloxProfiles.validUsername(text);
     if (!name) throw new ProfileError('invalid', 'Roblox usernames are 3-20 letters, numbers or one underscore (not at the start or end).');
     const cached = this.names.get(name.toLowerCase());

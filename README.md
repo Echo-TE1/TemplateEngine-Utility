@@ -22,7 +22,7 @@ Nothing is posted to a log until you set its channel.
 
 ### Roblox profile lookup
 
-`/profile tracker panel channel:#channel` posts a permanent panel with a **Search Roblox User** button. Anyone can press it; a pop-up asks for **one thing only, the Roblox username**. The result is a private (ephemeral) card: the username as a link (with a verified mark), a divider, then following, followers, description, **badges as inline icons**, created date, last online, ID, RAP and value (both link to Rolimons), the avatar on the right, and **View Profile** and **Refresh** buttons. The card uses Discord's container components, so it needs discord.js 14.19 or newer (`package.json` asks for it).
+`/profile tracker panel channel:#channel` posts a permanent panel with a **Search Roblox User** button. Anyone can press it; a pop-up asks for **one thing only, the Roblox username** (`@name` and pasted profile links work too). The result is a private (ephemeral) card: the username as a link (with a verified mark), a divider, then following, followers, description, **badges as inline icons**, created date, last online, ID, RAP and value (both link to Rolimons), the avatar on the right, and **View Profile** and **Refresh** buttons. The card uses Discord's container components, so it needs discord.js 14.19 or newer (`package.json` asks for it).
 The panel is saved and re-posted if deleted, and its buttons keep working after redeploys.
 
 **Badge icons** are uploaded once as the bot's own emoji (named `rb_<badge id>`, they show in any server) and reused. If an upload fails the badge shows as text. You can also upload emoji named `verified` and `premium` to the bot (Developer Portal > your app > Emoji) to replace the plain check mark and show a Premium icon.
@@ -46,6 +46,7 @@ Needs: the **Message Content Intent** switched on in the Discord Developer Porta
 
 | Command | Who | What it does |
 | --- | --- | --- |
+| `/help` | anyone | What the bot can do (owners also see the owner commands). |
 | `/robloxstatus` | anyone | Current status. `view: Incident history` lists recent incidents. `view: Uptime` shows incident-based uptime per service (`days` 1-90). When something is down it lists the broken services and the working ones. |
 | `/setup log action channel_id` | owner | Choose the channel for a log. The bot posts a notice there first, so a channel it cannot write to is rejected. |
 | `/setup view` | owner | Show which channel each log uses and the alert roles. |

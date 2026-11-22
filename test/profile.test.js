@@ -42,6 +42,7 @@ const FULL = {
 
 test('validUsername accepts real names and rejects bad ones', () => {
   assert.equal(RobloxProfiles.validUsername(' Builder_1 '), 'Builder_1');
+  assert.equal(RobloxProfiles.validUsername('@Builder'), 'Builder');
   for (const bad of ['ab', 'a'.repeat(21), '_abc', 'abc_', 'a_b_c', 'has space', 'bad!', '', null]) {
     assert.equal(RobloxProfiles.validUsername(bad), null, String(bad));
   }
@@ -174,4 +175,13 @@ test('Rolimons "success" with empty stats is not tracked; badge API 400 for ids 
   // A 400 for a normal id is still "unavailable", not "none".
   const normal = await new RobloxProfiles({ fetchImpl: fakeFetch({ ...FULL, 'GET roblox-badges': [400, {}] }), log: quiet }).lookup('Builder');
   assert.equal(normal.badges, null);
+});
+
+test('a pasted profile link is used directly (no username lookup)', async () => {
+  const calls = [];
+  const p = new RobloxProfiles({ fetchImpl: fakeFetch(FULL, calls), log: quiet });
+  assert.equal(await p.resolveName('https://www.roblox.com/users/7/profile'), '7');
+  assert.equal(await p.resolveName('roblox.com/fr/users/123/profile'), '123');
+  assert.equal(calls.length, 0);
+  assert.equal(await p.resolveName('@Builder'), '7');
 });
