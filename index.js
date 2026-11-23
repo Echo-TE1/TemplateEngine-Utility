@@ -22,6 +22,7 @@ const { BadgeEmojis } = require('./src/services/badgeEmojis');
 const { ProfilePanel } = require('./src/services/profilePanel');
 const { EconomyTracker } = require('./src/services/economy');
 const { MessageMirror } = require('./src/services/mirror');
+const { startWatchdog } = require('./src/lib/watchdog');
 const { botNoticeEmbed } = require('./src/embeds');
 
 const COMMAND_TIMEOUT_MS = 25_000;
@@ -229,9 +230,26 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
 
   client.on('error', (error) => console.error(`[Discord Error] ${error.message}`));
   client.on('shardError', (error) => console.error(`[Discord Connection Error] ${error.message}`));
+  client.on('shardDisconnect', (event, id) => console.warn(`[Discord] Shard ${id} disconnected (code ${event && event.code}).`));
+  client.on('shardReconnecting', (id) => console.log(`[Discord] Shard ${id} reconnecting.`));
+  client.on('shardResume', (id) => console.log(`[Discord] Shard ${id} resumed.`));
+  client.on('invalidated', () => {
+    console.error('[Discord] Session invalidated. Restarting.');
+    process.exit(1);
+  });
+
+  // If the connection to Discord is gone for 5 minutes, exit so the host restarts the bot.
+  const watchdog = startWatchdog({ isReady: () => client.isReady(), onStuck: () => process.exit(1) });
+  // Memory check: the host kills the process when it runs out, which looks like "offline" with no error.
+  const memTimer = setInterval(() => {
+    const mb = Math.round(process.memoryUsage().rss / 1_048_576);
+    if (mb > 400) console.warn(`[Memory] ${mb} MB in use (Render free plans allow 512 MB).`);
+  }, 10 * 60_000);
+  memTimer.unref();
 
   const shutdown = async (signal) => {
     console.log(`[Shutdown] ${signal} received.`);
+    watchdog.stop();
     tracker.stop();
     notifier.stop();
     tempChannels.stop();
@@ -257,6 +275,10 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('unhandledRejection', (error) => console.error('[Unhandled Rejection]', error));
+  process.on('uncaughtException', (error) => {
+    console.error('[Uncaught Exception]', error);
+    process.exit(1);
+  });
 }
 
 main().catch((error) => {
