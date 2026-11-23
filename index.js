@@ -25,6 +25,11 @@ const { MessageMirror } = require('./src/services/mirror');
 const { botNoticeEmbed } = require('./src/embeds');
 
 const COMMAND_TIMEOUT_MS = 25_000;
+
+// Slash commands are for the owner only. Everyone else can use just the two public features, which are
+// not commands: the reaction role message (reactions) and the Roblox profile lookup (button + modal).
+const PUBLIC_COMMANDS = new Set();
+const canUse = (interaction) => interaction.user.id === config.ownerId || PUBLIC_COMMANDS.has(interaction.commandName);
 const startedAt = Date.now();
 
 // Every file in src/commands exports { data, execute }. Add more commands by dropping files there.
@@ -173,6 +178,10 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   // Autocomplete (item names for /economy item).
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isAutocomplete || !interaction.isAutocomplete()) return;
+    if (!canUse(interaction)) {
+      await interaction.respond([]).catch(() => {});
+      return;
+    }
     try {
       const command = commands.get(interaction.commandName);
       if (command && command.autocomplete) await command.autocomplete(interaction, context);
@@ -186,6 +195,11 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
     if (!interaction.isChatInputCommand()) return;
     const command = commands.get(interaction.commandName);
     if (!command) return;
+    if (!canUse(interaction)) {
+      console.log(`[Command] /${interaction.commandName} refused for ${interaction.user.id} (owner only)`);
+      await interaction.reply({ content: 'This command can only be used by the bot owner.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      return;
+    }
 
     const started = Date.now();
     console.log(`[Command] /${interaction.commandName} started by ${interaction.user.id}`);

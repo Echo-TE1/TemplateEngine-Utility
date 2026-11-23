@@ -180,3 +180,7 @@ Posts to the **Economy** log (`/setup log`) and answers `/economy item <name>` (
 - Every `ECONOMY_POLL_MINUTES` the bot reads Rolimons' public item list, compares it with the last read and posts items whose RAP or value moved by `ECONOMY_MOVE_PERCENT` or more, plus new limiteds. The first read is only a baseline. If a large part of the market "moves" at once it is treated as bad data and not announced.
 - Roblox news about Robux, DevEx, the marketplace and similar (see `ECONOMY_KEYWORDS`) is also copied to the Economy log.
 - Not available, so not shown: Robux/DevEx rates and Robux purchase prices (Roblox has no public API for them), and Rolimons' demand/trend ratings (their meaning is not documented).
+
+## Who can use what
+
+All slash commands are owner-only (`BOT_OWNER_ID`); anyone else gets a private "owner only" reply and sees no autocomplete. Everyone else can use only the two public features: the reaction role message (react to get a log role and DMs) and the Roblox profile lookup panel (button and one-field modal, ephemeral result). To make a command public, add its name to `PUBLIC_COMMANDS` in `index.js`.
