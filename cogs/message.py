@@ -15,7 +15,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional, Union
@@ -62,6 +62,7 @@ REACTION_RADIUS = 8
 
 MAX_TEXT_LENGTH = 1000
 MAX_AVATAR_BYTES = 8 * 1024 * 1024
+MAX_EMOJI_BYTES = 512 * 1024
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_REACTIONS = 12
 MAX_GIF_FRAMES = 30
@@ -71,20 +72,16 @@ FONT_DIR = Path(__file__).resolve().parent.parent / "fonts"
 UI_FONT = "OpenSans-Variable.ttf"  # Noto Sans-style stand-in for gg sans
 EMOJI_FONT = "NotoColorEmoji.ttf"
 
-# display_font choice -> (bundled file, variable-font style or None)
-DISPLAY_FONTS: dict[str, tuple[str, Optional[str]]] = {
-    "default": (UI_FONT, "Bold"),
-    "sakura": ("NothingYouCouldDo-Regular.ttf", None),
-    "jellybean": ("ComicRelief-Bold.ttf", None),
-    "modern": ("Outfit-Bold.ttf", None),
-    "medieval": ("KaTeX_Fraktur-Bold.ttf", None),
-    "8bit": ("Silkscreen-Regular.ttf", None),
-    "vampyre": ("Gloock-Regular.ttf", None),
-}
 ThemeName = Literal["dark", "ash", "onyx", "light"]
-FontChoice = Literal["default", "sakura", "jellybean", "modern", "medieval", "8bit", "vampyre"]
 
-MENTION_RE = re.compile(r"(@(?:everyone|here|[\w.]{1,32}))")
+# Matches @name / #channel at the start of a word. Trailing punctuation
+# (. , ! ? ; : )) is left out of the pill. Resolved names use no-break spaces
+# so "@Some User" stays one token.
+MENTION_RE = re.compile(r"(?<![^ \t\r\n(])([@#][^ \t\r\n]+?)(?=[.,!?;:)]*(?:[ \t\r\n]|$))")
+USER_PING_RE = re.compile(r"<@!?(\d+)>")
+ROLE_PING_RE = re.compile(r"<@&(\d+)>")
+CHANNEL_PING_RE = re.compile(r"<#(\d+)>")
+NBSP = "\u00a0"
 REACTION_TOKEN_RE = re.compile(r"[^\s,]+")
 
 AMBER: RGB = (0xF0, 0xB2, 0x32)
@@ -111,7 +108,8 @@ class Theme:
     pill_bg: RGB
     pill_border: RGB
     pill_count: RGB
-    chip_bg: RGB  # clan tag chip
+    clan_bg: RGB  # clan tag chip background
+    clan_fg: RGB  # clan tag text
     highlight_bg: RGB  # row tint for mention_highlight
 
 
@@ -127,7 +125,8 @@ def _dark(bg: str, highlight: Optional[str] = None) -> Theme:
         pill_bg=_hex("#2B2D31"),
         pill_border=_hex("#3F4147"),
         pill_count=_hex("#B5BAC1"),
-        chip_bg=_blend((255, 255, 255), bg_rgb, 0.08),
+        clan_bg=_blend((78, 80, 88), bg_rgb, 0.65),
+        clan_fg=_hex("#DBDEE1"),
         highlight_bg=_hex(highlight) if highlight else _blend(AMBER, bg_rgb, 0.10),
     )
 
@@ -146,7 +145,8 @@ THEMES: dict[str, Theme] = {
         pill_bg=_hex("#F2F3F5"),
         pill_border=_hex("#E3E5E8"),
         pill_count=_hex("#4E5058"),
-        chip_bg=_blend((0, 0, 0), (255, 255, 255), 0.06),
+        clan_bg=_hex("#E3E5E8"),
+        clan_fg=_hex("#4E5058"),
         highlight_bg=_blend(AMBER, (255, 255, 255), 0.10),
     ),
 }
@@ -284,65 +284,17 @@ def _decode_attachment(data: bytes, animated: bool) -> tuple[list[Image.Image], 
     return frames, durations
 
 
-TZ_ALIASES: dict[str, int] = {  # fixed offsets in minutes
-    "UTC": 0, "GMT": 0, "Z": 0, "WET": 0, "BST": 60, "CET": 60, "CEST": 120,
-    "EET": 120, "EEST": 180, "MSK": 180, "GST": 240, "PKT": 300, "IST": 330,
-    "ICT": 420, "WIB": 420, "SGT": 480, "HKT": 480, "AWST": 480,
-    "JST": 540, "KST": 540, "ACST": 570, "AEST": 600, "AEDT": 660, "NZST": 720,
-    "NZDT": 780, "EST": -300, "EDT": -240, "CST": -360, "CDT": -300,
-    "MST": -420, "MDT": -360, "PST": -480, "PDT": -420, "AKST": -540,
-    "AKDT": -480, "HST": -600, "AST": -240, "NST": -210,
-}
-OFFSET_RE = re.compile(r"^(?:UTC|GMT)?\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?$", re.IGNORECASE)
-
-
-@lru_cache(maxsize=1)
-def _zone_names() -> dict[str, str]:
-    """lowercase IANA name -> proper-case name."""
+def default_timestamp(military: bool = False) -> str:
+    """'Today at 8:44 PM' (or 'Today at 20:44' in 24-hour time).
+    The clock follows the CARD_TIMEZONE env var (an IANA name, default UTC)."""
     try:
-        from zoneinfo import available_timezones
+        from zoneinfo import ZoneInfo
 
-        return {name.lower(): name for name in available_timezones()}
+        now = datetime.now(ZoneInfo(os.environ.get("CARD_TIMEZONE", "UTC")))
     except Exception:
-        return {}
-
-
-def parse_timezone(value: Optional[str]) -> Optional[tzinfo]:
-    """Turn user input into a tzinfo. Accepts IANA names ('Asia/Tokyo',
-    'america/new_york'), abbreviations ('JST', 'PST'), and offsets
-    ('UTC+9', '+05:30', 'GMT-3'). Returns None if it can't be understood."""
-    text = (value or "").strip()
-    if not text:
-        return None
-
-    upper = text.upper()
-    if upper in TZ_ALIASES:
-        return timezone(timedelta(minutes=TZ_ALIASES[upper]))
-
-    match = OFFSET_RE.match(text)
-    if match:
-        sign = -1 if match.group(1) == "-" else 1
-        hours, minutes = int(match.group(2)), int(match.group(3) or 0)
-        if hours <= 14 and minutes < 60:
-            return timezone(sign * timedelta(hours=hours, minutes=minutes))
-        return None
-
-    name = _zone_names().get(text.lower().replace(" ", "_"))
-    if name:
-        try:
-            from zoneinfo import ZoneInfo
-
-            return ZoneInfo(name)
-        except Exception:
-            return None
-    return None
-
-
-def default_timestamp(tz: Optional[tzinfo] = None) -> str:
-    """'Today at 8:44 PM' in the given timezone (else CARD_TIMEZONE, else UTC)."""
-    if tz is None:
-        tz = parse_timezone(os.environ.get("CARD_TIMEZONE", "UTC")) or timezone.utc
-    now = datetime.now(tz)
+        now = datetime.now(timezone.utc)
+    if military:
+        return f"Today at {now.strftime('%H:%M')}"
     return f"Today at {now.strftime('%I:%M %p').lstrip('0')}"
 
 
@@ -359,7 +311,8 @@ def render_message_card(
     timestamp: str,
     text: str,
     theme_name: str = "dark",
-    font_key: str = "default",
+    clan_badge: Optional[bytes] = None,
+    mention_colors: Optional[dict[str, RGB]] = None,
     attachment_bytes: Optional[bytes] = None,
     reactions: Optional[list[tuple[str, int]]] = None,
     row_highlight: bool = False,
@@ -368,11 +321,10 @@ def render_message_card(
     """Render the card at 2x, downsample with LANCZOS. Returns (buffer, ext)."""
     theme = THEMES.get(theme_name, THEMES["dark"])
 
-    name_file, name_style = DISPLAY_FONTS.get(font_key, DISPLAY_FONTS["default"])
-    name_font = _font(name_file, name_style, px(NAME_SIZE))
+    name_font = _ui(NAME_SIZE, "Bold")
     body_font = _ui(BODY_SIZE)
     time_font = _ui(TIME_SIZE)
-    chip_font = _ui(12, "Bold")
+    chip_font = _ui(12, "SemiBold")
     app_font = _ui(10, "Bold")
     count_font = _ui(14, "SemiBold")
 
@@ -388,7 +340,15 @@ def render_message_card(
 
     # ---- header pieces: name, [clan tag], [APP badge], timestamp
     chip_text = (clan_tag or "").strip()[:4] or None
-    chip_w = width(chip_text, chip_font) + px(10) if chip_text else 0
+    badge_img: Optional[Image.Image] = None
+    if chip_text and clan_badge:
+        try:
+            with Image.open(io.BytesIO(clan_badge)) as raw:
+                badge_img = raw.convert("RGBA").resize((px(12), px(12)), Image.LANCZOS)
+        except (OSError, ValueError):
+            badge_img = None
+    badge_space = px(12) + px(3) if badge_img is not None else 0
+    chip_w = px(4) + badge_space + width(chip_text, chip_font) + px(4) if chip_text else 0
     chip_h = px(16)
     app_w = width("APP", app_font) + px(8)
     app_h = px(15)
@@ -502,13 +462,17 @@ def render_message_card(
     if chip_text:
         x += px(4)
         top = center_y - chip_h // 2
-        draw.rounded_rectangle((x, top, x + chip_w, top + chip_h), radius=px(4), fill=theme.chip_bg)
+        draw.rounded_rectangle((x, top, x + chip_w, top + chip_h), radius=px(4), fill=theme.clan_bg)
+        text_left = x + px(4)
+        if badge_img is not None:
+            base.paste(badge_img, (text_left, top + (chip_h - px(12)) // 2), badge_img)
+            text_left += badge_space
         draw.text(
-            (x + chip_w // 2, _baseline(chip_font, top, chip_h)),
+            (text_left, _baseline(chip_font, top, chip_h)),
             chip_text,
             font=chip_font,
-            fill=resolved_name_color,
-            anchor="ms",
+            fill=theme.clan_fg,
+            anchor="ls",
         )
         x += chip_w
     if is_app:
@@ -538,12 +502,15 @@ def render_message_card(
                 continue
             part_w = measure.textlength(part, font=body_font)
             if j % 2 == 1:
+                tint = (mention_colors or {}).get(part)
+                pill_bg = _blend(tint, theme.highlight_bg if row_highlight else theme.bg, 0.2) if tint else theme.mention_bg
+                pill_fg = tint if tint else theme.mention_fg
                 draw.rounded_rectangle(
                     (cursor, top + px(1), cursor + part_w + px(4), top + line_h - px(1)),
                     radius=px(3),
-                    fill=theme.mention_bg,
+                    fill=pill_bg,
                 )
-                draw.text((cursor + px(2), line_baseline), part, font=body_font, fill=theme.mention_fg, anchor="ls")
+                draw.text((cursor + px(2), line_baseline), part, font=body_font, fill=pill_fg, anchor="ls")
                 cursor += part_w + px(4)
             else:
                 draw.text((cursor, line_baseline), part, font=body_font, fill=theme.body, anchor="ls")
@@ -612,7 +579,16 @@ def render_message_card(
 class MessageCog(commands.Cog):
     """Slash command group: /generate discord message"""
 
-    generate = app_commands.Group(name="generate", description="Generate images")
+    # Usable in servers, in the bot's DMs, and (when the user installs the app)
+    # in any DM or group DM.
+    generate = app_commands.Group(
+        name="generate",
+        description="Generate images",
+        allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
+        allowed_contexts=app_commands.AppCommandContext(
+            guild=True, dm_channel=True, private_channel=True
+        ),
+    )
     discord_group = app_commands.Group(
         name="discord", description="Discord-style images", parent=generate
     )
@@ -645,6 +621,72 @@ class MessageCog(commands.Cog):
             raise ValueError("Download was empty.")
         return bytes(data)
 
+    async def _clan_info(self, target) -> tuple[Optional[str], Optional[bytes]]:
+        """The user's clan (server) tag and its badge image, if they show one."""
+        guild_info = getattr(target, "primary_guild", None)
+        if getattr(guild_info, "tag", None) is None:
+            try:  # interaction data can omit it; a full user fetch includes it
+                full = await self.bot.fetch_user(target.id)
+                guild_info = getattr(full, "primary_guild", None)
+            except discord.HTTPException:
+                guild_info = None
+        tag = getattr(guild_info, "tag", None)
+        if not tag or getattr(guild_info, "identity_enabled", True) is False:
+            return None, None
+
+        badge_bytes = None
+        badge = getattr(guild_info, "badge", None)
+        if badge is not None:
+            try:
+                badge_bytes = await self._fetch_bytes(
+                    badge.replace(size=64, format="png").url, MAX_EMOJI_BYTES
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                badge_bytes = None
+        return tag, badge_bytes
+
+    async def _resolve_mentions(
+        self, interaction: discord.Interaction, text: str
+    ) -> tuple[str, dict[str, RGB]]:
+        """Turn <@id>, <@&id> and <#id> into readable @name / #channel text.
+        Names use no-break spaces so each mention stays one pill."""
+        guild = interaction.guild
+        colors: dict[str, RGB] = {}
+        names: dict[str, str] = {}
+
+        async def user_name(user_id: int) -> str:
+            member = guild.get_member(user_id) if guild else None
+            if member is not None:
+                return member.display_name
+            user = self.bot.get_user(user_id)
+            if user is None:
+                try:
+                    user = await self.bot.fetch_user(user_id)
+                except discord.HTTPException:
+                    return "unknown-user"
+            return user.display_name
+
+        for kind, pattern in (("u", USER_PING_RE), ("r", ROLE_PING_RE), ("c", CHANNEL_PING_RE)):
+            for raw_id in list(dict.fromkeys(pattern.findall(text)))[:15]:
+                key = f"{kind}{raw_id}"
+                ident = int(raw_id)
+                if kind == "u":
+                    names[key] = "@" + (await user_name(ident)).replace(" ", NBSP)
+                elif kind == "r":
+                    role = guild.get_role(ident) if guild else None
+                    names[key] = "@" + (role.name if role else "deleted-role").replace(" ", NBSP)
+                    if role is not None and role.color.value:
+                        colors[names[key]] = (role.color.r, role.color.g, role.color.b)
+                else:
+                    channel = (guild.get_channel(ident) if guild else None) or self.bot.get_channel(ident)
+                    names[key] = "#" + (getattr(channel, "name", None) or "deleted-channel").replace(" ", NBSP)
+
+        text = USER_PING_RE.sub(lambda m: names.get(f"u{m.group(1)}", "@unknown-user"), text)
+        text = ROLE_PING_RE.sub(lambda m: names.get(f"r{m.group(1)}", "@deleted-role"), text)
+        text = CHANNEL_PING_RE.sub(lambda m: names.get(f"c{m.group(1)}", "#deleted-channel"), text)
+        return text, colors
+
+
     @discord_group.command(
         name="message",
         description="Generate a Discord-style message image.",
@@ -653,10 +695,9 @@ class MessageCog(commands.Cog):
         text="The message content",
         user="Who the message is shown as (defaults to you)",
         theme="Card theme (default: dark)",
-        display_font="Display name font (default: default)",
         image="An image to show under the message",
         timestamp="Custom timestamp text (overrides the clock)",
-        timezone="Any timezone: Asia/Tokyo, JST, UTC+9, -05:00 ... (default: UTC)",
+        military_time="Use 24-hour time (e.g. 20:44) in the default timestamp",
         mention_highlight="Highlight the row like a mention (amber tint and bar)",
         reactions="Reactions, e.g. '💀 4, 🔥 2'",
         togif="Output a GIF instead of a PNG",
@@ -669,28 +710,15 @@ class MessageCog(commands.Cog):
         text: app_commands.Range[str, 1, MAX_TEXT_LENGTH],
         user: Optional[Union[discord.Member, discord.User]] = None,
         theme: ThemeName = "dark",
-        display_font: FontChoice = "default",
         image: Optional[discord.Attachment] = None,
         timestamp: Optional[str] = None,
-        timezone: Optional[str] = None,
+        military_time: bool = False,
         mention_highlight: bool = False,
         reactions: Optional[str] = None,
         togif: bool = False,
         use_username: bool = False,
         hide_clantags: bool = False,
     ) -> None:
-        tz = None
-        if timezone and not (timestamp or "").strip():
-            tz = parse_timezone(timezone)
-            if tz is None:
-                await interaction.response.send_message(
-                    f"I don't know the timezone `{timezone[:40]}`. Try a name like "
-                    "`Asia/Tokyo` or `America/New_York`, an abbreviation like `JST`, "
-                    "or an offset like `UTC+9` or `-05:30`.",
-                    ephemeral=True,
-                )
-                return
-
         await interaction.response.defer(thinking=True)
         target = user or interaction.user
 
@@ -726,9 +754,11 @@ class MessageCog(commands.Cog):
         if colour is not None and getattr(colour, "value", 0) != 0:
             name_color = (colour.r, colour.g, colour.b)
 
-        clan_tag = None
+        clan_tag, clan_badge = (None, None)
         if not hide_clantags:
-            clan_tag = getattr(getattr(target, "primary_guild", None), "tag", None)
+            clan_tag, clan_badge = await self._clan_info(target)
+
+        text, mention_colors = await self._resolve_mentions(interaction, text)
 
         try:
             buffer, ext = await asyncio.to_thread(
@@ -737,11 +767,12 @@ class MessageCog(commands.Cog):
                 name=target.name if use_username else target.display_name,
                 name_color=name_color,
                 clan_tag=clan_tag,
+                clan_badge=clan_badge,
+                mention_colors=mention_colors,
                 is_app=bool(getattr(target, "bot", False)),
-                timestamp=(timestamp or "").strip()[:60] or default_timestamp(tz),
+                timestamp=(timestamp or "").strip()[:60] or default_timestamp(military_time),
                 text=text,
                 theme_name=theme,
-                font_key=display_font,
                 attachment_bytes=attachment_bytes,
                 reactions=parse_reactions((reactions or "")[:300]),
                 row_highlight=mention_highlight,
@@ -754,20 +785,6 @@ class MessageCog(commands.Cog):
             raise
 
         await interaction.followup.send(file=discord.File(buffer, filename=f"message.{ext}"))
-
-    @message.autocomplete("timezone")
-    async def timezone_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        needle = current.strip().lower().replace(" ", "_")
-        names = sorted(_zone_names().values())
-        if needle:
-            names = [n for n in names if needle in n.lower()]
-        else:
-            names = [n for n in names if n.startswith(("Asia/Tokyo", "America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Australia/Sydney", "UTC"))]
-        return [app_commands.Choice(name=n, value=n) for n in names[:25]]
-
-
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(MessageCog(bot))

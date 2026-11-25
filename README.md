@@ -13,15 +13,14 @@ Image rendering only: no webhooks, no impersonation.
 | `text` | Message content (required, 1-1000 chars) |
 | `user` | Who the message is shown as (defaults to you) |
 | `theme` | `dark` (default), `ash`, `onyx` or `light` |
-| `display_font` | `default`, `sakura`, `jellybean`, `modern`, `medieval`, `8bit`, `vampyre` |
 | `image` | Image shown under the text (rounded corners, scaled to fit) |
-| `timestamp` | Custom timestamp text (overrides the clock) |
-| `timezone` | Any timezone for the "Today at ..." time: `Asia/Tokyo`, `JST`, `UTC+9`, `-05:30` (default `CARD_TIMEZONE`, else UTC) |
+| `timestamp` | Custom timestamp text (overrides the clock). The default clock follows `CARD_TIMEZONE` (e.g. `Asia/Tokyo`), else UTC |
+| `military_time` | 24-hour time in the default timestamp (`Today at 20:44`) |
 | `mention_highlight` | Amber row tint and left bar, like a mention |
 | `reactions` | e.g. `💀 4, 🔥 2` (Unicode emoji; count defaults to 1) |
 | `togif` | Output a GIF (animated if the attached image is animated) |
 | `use_username` | Show `user.name` instead of the display name |
-| `hide_clantags` | Hide the clan tag badge |
+| `hide_clantags` | Hide the clan tag |
 
 The card is drawn locally at 2x and downsampled with LANCZOS. Fonts and the
 emoji font are bundled in `fonts/`; no network access is needed to render.
@@ -53,3 +52,11 @@ The bot needs Manage Channels there, and the server must be a Community server.
 Enable the **Server Members** intent for a de-duplicated user count.
 The bot only reuses channels it made itself (it marks them with a permission
 overwrite for itself), so other channels are never touched.
+
+## Mentions, clan tags and DMs
+
+Pings in `text` (`<@id>`, `<@&role>`, `<#channel>`) are shown as `@name` /
+`#channel` pills (role pills use the role colour). The clan tag is drawn as a
+gray chip with the clan badge, like the Discord client. The command also works
+in DMs and group DMs; to use it outside servers the bot has to be installed to
+your account (Developer Portal > Installation > enable *User Install*).
