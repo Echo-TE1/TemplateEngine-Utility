@@ -7,8 +7,10 @@ Env vars:
   DEPLOY_LOG_CHANNEL_ID  optional, channel for redeployment logs
   PORT           optional, keep-alive web server port (default 8080)
 
-Note: the "!" prefix needs the Message Content intent enabled in the
-Discord Developer Portal (Bot > Privileged Gateway Intents).
+Note: the "!" prefix needs the Message Content intent, and the unique user
+count needs the Server Members intent, both enabled in the Discord Developer
+Portal (Bot > Privileged Gateway Intents). Without Server Members the bot still
+starts and falls back to an approximate count.
 """
 
 from __future__ import annotations
@@ -38,9 +40,11 @@ async def sync(ctx: commands.Context) -> None:
 
 
 class QuoteBot(commands.Bot):
-    def __init__(self) -> None:
+    def __init__(self, members_intent: bool = True) -> None:
         intents = discord.Intents.default()
         intents.message_content = True  # needed for the "!" prefix
+        # Needed to count *unique* users across servers (StatsCog).
+        intents.members = members_intent
 
         owner_id = os.environ.get("BOT_OWNER_ID", "").strip()
         super().__init__(
@@ -54,6 +58,7 @@ class QuoteBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.load_extension("cogs.message")
+        await self.load_extension("cogs.stats")
         synced = await self.tree.sync()
         log.info("Synced %d slash command(s)", len(synced))
         self._keep_alive = await start_keep_alive()
@@ -80,8 +85,16 @@ async def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise SystemExit("DISCORD_TOKEN is not set")
-    async with QuoteBot() as bot:
-        await bot.start(token)
+    try:
+        async with QuoteBot(members_intent=True) as bot:
+            await bot.start(token)
+    except discord.PrivilegedIntentsRequired:
+        log.warning(
+            "Server Members intent is not enabled in the Developer Portal; "
+            "starting without it (user count will not be de-duplicated)."
+        )
+        async with QuoteBot(members_intent=False) as bot:
+            await bot.start(token)
 
 
 if __name__ == "__main__":
