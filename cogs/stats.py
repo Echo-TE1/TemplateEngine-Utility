@@ -7,11 +7,10 @@ The channels are found again by name after a redeploy (or by ID via env vars),
 so they are reused rather than duplicated. Discord limits a channel to 2 renames
 per 10 minutes, so changes are batched and applied at most once per interval.
 
-Env vars (all optional):
-  STATS_GUILD_ID           guild that holds the channels (default below)
-  STATS_CATEGORY_ID        category to create new channels in
-  STATS_USERS_CHANNEL_ID   pin the users channel by ID
-  STATS_SERVERS_CHANNEL_ID pin the servers channel by ID
+The guild ID is hard-coded in config.py. A channel is only reused if its name
+matches AND it carries a permission overwrite for the bot's own member, which
+the bot adds when it creates the channel. That marker lives in Discord, so it
+survives redeploys, and channels made by anyone else are never touched.
 
 Needs the Manage Channels permission in that guild. Counting *unique* users
 needs the Server Members intent; without it the user count falls back to the
@@ -22,16 +21,16 @@ more than once).
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Optional
 
 import discord
 from discord.ext import commands, tasks
 
+from config import GUILD_ID
+
 log = logging.getLogger(__name__)
 
-DEFAULT_GUILD_ID = 1573644874077708438
 UPDATE_MINUTES = 6  # 2 renames / 10 min limit => stay safely under it
 
 USERS_RE = re.compile(r"^[\d,]+ indiv\. users$")
@@ -49,7 +48,7 @@ def servers_name(count: int) -> str:
 class StatsCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.guild_id = int(os.environ.get("STATS_GUILD_ID", DEFAULT_GUILD_ID))
+        self.guild_id = GUILD_ID
         self._dirty = True
         self._users_channel: Optional[discord.StageChannel] = None
         self._servers_channel: Optional[discord.StageChannel] = None
@@ -96,18 +95,16 @@ class StatsCog(commands.Cog):
 
     # ------------------------------------------------------------- channels
 
+    @staticmethod
+    def _made_by_bot(guild: discord.Guild, channel: discord.StageChannel) -> bool:
+        """The bot adds an overwrite for itself when it creates the channel."""
+        return guild.me in channel.overwrites
+
     def _find_channel(
-        self,
-        guild: discord.Guild,
-        pinned_id: Optional[str],
-        pattern: re.Pattern[str],
+        self, guild: discord.Guild, pattern: re.Pattern[str]
     ) -> Optional[discord.StageChannel]:
-        if pinned_id and pinned_id.isdigit():
-            found = guild.get_channel(int(pinned_id))
-            if isinstance(found, discord.StageChannel):
-                return found
         for channel in guild.stage_channels:
-            if pattern.match(channel.name):
+            if pattern.match(channel.name) and self._made_by_bot(guild, channel):
                 return channel
         return None
 
@@ -120,15 +117,8 @@ class StatsCog(commands.Cog):
                 view_channel=True, connect=True, manage_channels=True
             ),
         }
-        category = None
-        category_id = os.environ.get("STATS_CATEGORY_ID", "").strip()
-        if category_id.isdigit():
-            found = guild.get_channel(int(category_id))
-            if isinstance(found, discord.CategoryChannel):
-                category = found
         channel = await guild.create_stage_channel(
             name=name,
-            category=category,
             overwrites=overwrites,
             reason="Live bot stats channel",
         )
@@ -138,13 +128,9 @@ class StatsCog(commands.Cog):
     async def _ensure(self, guild: discord.Guild) -> bool:
         """Find (or create) both stage channels. Returns False if not possible."""
         if self._users_channel is None or guild.get_channel(self._users_channel.id) is None:
-            self._users_channel = self._find_channel(
-                guild, os.environ.get("STATS_USERS_CHANNEL_ID"), USERS_RE
-            )
+            self._users_channel = self._find_channel(guild, USERS_RE)
         if self._servers_channel is None or guild.get_channel(self._servers_channel.id) is None:
-            self._servers_channel = self._find_channel(
-                guild, os.environ.get("STATS_SERVERS_CHANNEL_ID"), SERVERS_RE
-            )
+            self._servers_channel = self._find_channel(guild, SERVERS_RE)
 
         try:
             if self._users_channel is None:
