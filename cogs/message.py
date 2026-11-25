@@ -1,9 +1,10 @@
-"""MessageCog: renders a Discord-style chat-card image for a selected user.
+"""MessageCog: renders a Discord-client-style chat card for a selected user.
 
 Command: /generate discord message
 
-Image rendering only: no webhooks, no impersonation. The bot replies with its
-own message and attaches the generated image.
+Rendering is done locally with Pillow at 2x resolution and downsampled with
+LANCZOS. The bot replies with its own message and attaches the generated
+image (PNG or GIF). No webhooks, no impersonation of accounts.
 """
 
 from __future__ import annotations
@@ -11,114 +12,142 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional, Union
 
 import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageSequence
 
 log = logging.getLogger(__name__)
 
+RGB = tuple[int, int, int]
+
 # ---------------------------------------------------------------- constants
 
-CANVAS_WIDTH = 800
-PADDING = 32
-AVATAR_SIZE = 96
-AVATAR_TEXT_GAP = 24
-HEADER_BODY_GAP = 24
-BLOCK_GAP = 16
-LINE_SPACING = 8
+S = 2  # supersampling factor: draw at 2x, downsample with LANCZOS
+
+
+def px(value: float) -> int:
+    """CSS pixels -> supersampled pixels."""
+    return int(round(value * S))
+
+
+# Layout (CSS px)
+PAD = 16  # outer padding on all sides
+AVATAR = 40
+AVATAR_GAP = 16  # gap between avatar and text column
+AVATAR_TOP_OFFSET = 2
+LINE_H = 22  # header and body line height
+MAX_COL = 640  # max width of the text column
+BODY_SIZE = 15
+NAME_SIZE = 16
+TIME_SIZE = 12
+ATTACH_MAX_W = 400
+ATTACH_MAX_H = 300
+ATTACH_RADIUS = 8
+ATTACH_GAP = 4
+REACTION_H = 24
+REACTION_PAD = 6
+REACTION_EMOJI = 16
+REACTION_GAP = 4
+REACTION_RADIUS = 8
+
 MAX_TEXT_LENGTH = 1000
 MAX_AVATAR_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
-MAX_EMOJI_BYTES = 512 * 1024
-MAX_ATTACHMENT_HEIGHT = 500
-MAX_REACTIONS = 8
-SUPERSAMPLE = 4  # for smooth circular avatar edges
-
-NAME_FONT_SIZE = 32
-TIME_FONT_SIZE = 20
-BODY_FONT_SIZE = 28
-TAG_FONT_SIZE = 20
-COUNT_FONT_SIZE = 22
-
-REACTION_HEIGHT = 44
-REACTION_PAD = 12
-REACTION_GAP = 10
-EMOJI_SIZE = 26
+MAX_REACTIONS = 12
+MAX_GIF_FRAMES = 30
+MASK_SUPERSAMPLE = 4
 
 FONT_DIR = Path(__file__).resolve().parent.parent / "fonts"
+UI_FONT = "OpenSans-Variable.ttf"  # Noto Sans-style stand-in for gg sans
+EMOJI_FONT = "NotoColorEmoji.ttf"
 
-# display name -> (regular file, bold file), bundled in ./fonts
-FONTS: dict[str, tuple[str, str]] = {
-    "Inter": ("Inter-Regular.otf", "Inter-Bold.otf"),
-    "DejaVu Sans": ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"),
-    "DejaVu Serif": ("DejaVuSerif.ttf", "DejaVuSerif-Bold.ttf"),
-    "DejaVu Mono": ("DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf"),
+# display_font choice -> (bundled file, variable-font style or None)
+DISPLAY_FONTS: dict[str, tuple[str, Optional[str]]] = {
+    "default": (UI_FONT, "Bold"),
+    "sakura": ("NothingYouCouldDo-Regular.ttf", None),
+    "jellybean": ("ComicRelief-Bold.ttf", None),
+    "modern": ("Outfit-Bold.ttf", None),
+    "medieval": ("KaTeX_Fraktur-Bold.ttf", None),
+    "8bit": ("Silkscreen-Regular.ttf", None),
+    "vampyre": ("Gloock-Regular.ttf", None),
 }
-FontName = Literal["Inter", "DejaVu Sans", "DejaVu Serif", "DejaVu Mono"]
-
-SYSTEM_FONT_FALLBACKS = (
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "DejaVuSans.ttf",
-    "arial.ttf",
-)
+ThemeName = Literal["dark", "ash", "onyx", "light"]
+FontChoice = Literal["default", "sakura", "jellybean", "modern", "medieval", "8bit", "vampyre"]
 
 MENTION_RE = re.compile(r"(@(?:everyone|here|[\w.]{1,32}))")
-REACTION_TOKEN_RE = re.compile(r"<a?:\w+:\d+>|\d+|[^\s,]+")
-CUSTOM_EMOJI_RE = re.compile(r"<a?:\w+:(\d+)>")
+REACTION_TOKEN_RE = re.compile(r"[^\s,]+")
 
-TWEMOJI_URL = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{name}.png"
-CUSTOM_EMOJI_URL = "https://cdn.discordapp.com/emojis/{id}.png?size=64"
+AMBER: RGB = (0xF0, 0xB2, 0x32)
+BLURPLE: RGB = (0x58, 0x65, 0xF2)
+
+
+def _hex(value: str) -> RGB:
+    value = value.lstrip("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+def _blend(fg: RGB, bg: RGB, alpha: float) -> RGB:
+    return tuple(int(round(f * alpha + b * (1 - alpha))) for f, b in zip(fg, bg))  # type: ignore[return-value]
 
 
 @dataclass(frozen=True)
 class Theme:
-    background: tuple[int, int, int]
-    name: tuple[int, int, int]
-    timestamp: tuple[int, int, int]
-    body: tuple[int, int, int]
-    mention_fg: tuple[int, int, int]
-    mention_bg: tuple[int, int, int]
-    pill_bg: tuple[int, int, int]
-    pill_fg: tuple[int, int, int]
-    tag_bg: tuple[int, int, int]
-    tag_fg: tuple[int, int, int]
-    placeholder: tuple[int, int, int]
+    bg: RGB
+    name_default: RGB
+    body: RGB
+    timestamp: RGB
+    mention_bg: RGB
+    mention_fg: RGB
+    pill_bg: RGB
+    pill_border: RGB
+    pill_count: RGB
+    chip_bg: RGB  # clan tag chip
+    highlight_bg: RGB  # row tint for mention_highlight
+
+
+def _dark(bg: str, highlight: Optional[str] = None) -> Theme:
+    bg_rgb = _hex(bg)
+    return Theme(
+        bg=bg_rgb,
+        name_default=_hex("#F2F3F5"),
+        body=_hex("#DBDEE1"),
+        timestamp=_hex("#949BA4"),
+        mention_bg=_hex("#3C4270"),
+        mention_fg=_hex("#C9CDFB"),
+        pill_bg=_hex("#2B2D31"),
+        pill_border=_hex("#3F4147"),
+        pill_count=_hex("#B5BAC1"),
+        chip_bg=_blend((255, 255, 255), bg_rgb, 0.08),
+        highlight_bg=_hex(highlight) if highlight else _blend(AMBER, bg_rgb, 0.10),
+    )
 
 
 THEMES: dict[str, Theme] = {
-    "dark": Theme(
-        background=(49, 51, 56),
-        name=(255, 255, 255),
-        timestamp=(148, 155, 164),
-        body=(219, 222, 225),
-        mention_fg=(201, 205, 251),
-        mention_bg=(61, 66, 112),
-        pill_bg=(43, 45, 49),
-        pill_fg=(219, 222, 225),
-        tag_bg=(64, 66, 73),
-        tag_fg=(219, 222, 225),
-        placeholder=(114, 118, 125),
-    ),
+    "dark": _dark("#313338", highlight="#433B2C"),
+    "ash": _dark("#323339"),
+    "onyx": _dark("#070709"),
     "light": Theme(
-        background=(255, 255, 255),
-        name=(6, 6, 7),
-        timestamp=(94, 103, 114),
-        body=(46, 51, 56),
-        mention_fg=(80, 92, 220),
-        mention_bg=(230, 232, 253),
-        pill_bg=(242, 243, 245),
-        pill_fg=(46, 51, 56),
-        tag_bg=(235, 237, 239),
-        tag_fg=(46, 51, 56),
-        placeholder=(163, 166, 170),
+        bg=_hex("#FFFFFF"),
+        name_default=_hex("#060607"),
+        body=_hex("#313338"),
+        timestamp=_hex("#5C5E66"),
+        mention_bg=_hex("#E6E8FD"),
+        mention_fg=_hex("#505CDC"),
+        pill_bg=_hex("#F2F3F5"),
+        pill_border=_hex("#E3E5E8"),
+        pill_count=_hex("#4E5058"),
+        chip_bg=_blend((0, 0, 0), (255, 255, 255), 0.06),
+        highlight_bg=_blend(AMBER, (255, 255, 255), 0.10),
     ),
 }
 
@@ -126,126 +155,104 @@ THEMES: dict[str, Theme] = {
 # ------------------------------------------------------------------ helpers
 
 
-@lru_cache(maxsize=64)
-def _load_font(font_name: str, bold: bool, size: int) -> ImageFont.ImageFont:
-    regular, bold_file = FONTS.get(font_name, FONTS["Inter"])
-    candidates = [str(FONT_DIR / (bold_file if bold else regular))]
-    candidates += [str(FONT_DIR / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"))]
-    candidates += list(SYSTEM_FONT_FALLBACKS)
-    for path in candidates:
+@lru_cache(maxsize=128)
+def _font(file: str, variation: Optional[str], size: int) -> ImageFont.FreeTypeFont:
+    """Load a bundled font. Never falls back to ImageFont.load_default()."""
+    for name in (file, UI_FONT, "DejaVuSans.ttf"):
         try:
-            return ImageFont.truetype(path, size)
+            font = ImageFont.truetype(str(FONT_DIR / name), size)
         except OSError:
             continue
-    try:
-        return ImageFont.load_default(size=size)  # Pillow >= 10.1
-    except TypeError:
-        return ImageFont.load_default()
+        if variation and name == UI_FONT:
+            try:
+                font.set_variation_by_name(variation)
+            except Exception:  # variable-font support missing: keep default weight
+                pass
+        return font
+    raise RuntimeError(f"No usable fonts found in {FONT_DIR}")
 
 
-def _text_width(draw: ImageDraw.ImageDraw, text: str, font) -> float:
-    return draw.textlength(text, font=font)
+def _ui(size_css: float, style: str = "Regular") -> ImageFont.FreeTypeFont:
+    return _font(UI_FONT, style, px(size_css))
 
 
-def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
-    """Word-wrap text to max_width, preserving newlines and splitting
-    words that are too long to fit on a single line."""
+def _baseline(font: ImageFont.FreeTypeFont, top: int, line_h: int) -> int:
+    """Baseline y that vertically centres the font inside a line box."""
+    ascent, descent = font.getmetrics()
+    return top + (line_h - (ascent + descent)) // 2 + ascent
+
+
+def _wrap_text(measure: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
+    """Word-wrap preserving newlines; break words that are wider than the column."""
     lines: list[str] = []
     for paragraph in text.split("\n"):
         if not paragraph.strip():
             lines.append("")
             continue
-
         current = ""
         for word in paragraph.split(" "):
             candidate = word if not current else f"{current} {word}"
-            if _text_width(draw, candidate, font) <= max_width:
+            if measure.textlength(candidate, font=font) <= max_width:
                 current = candidate
                 continue
-
             if current:
                 lines.append(current)
                 current = ""
-
-            # Word alone may still be too wide: break it by characters.
-            while _text_width(draw, word, font) > max_width:
+            while measure.textlength(word, font=font) > max_width:
                 cut = len(word)
-                while cut > 1 and _text_width(draw, word[:cut], font) > max_width:
+                while cut > 1 and measure.textlength(word[:cut], font=font) > max_width:
                     cut -= 1
                 lines.append(word[:cut])
                 word = word[cut:]
             current = word
-
         lines.append(current)
     return lines
 
 
 def _rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
-    big = (size[0] * SUPERSAMPLE, size[1] * SUPERSAMPLE)
+    big = (size[0] * MASK_SUPERSAMPLE, size[1] * MASK_SUPERSAMPLE)
     mask = Image.new("L", big, 0)
     ImageDraw.Draw(mask).rounded_rectangle(
-        (0, 0, big[0] - 1, big[1] - 1), radius=radius * SUPERSAMPLE, fill=255
+        (0, 0, big[0] - 1, big[1] - 1), radius=radius * MASK_SUPERSAMPLE, fill=255
     )
     return mask.resize(size, Image.LANCZOS)
 
 
 def _circular_avatar(avatar: Image.Image, size: int) -> Image.Image:
-    """Return an RGBA avatar cropped to a circle with anti-aliased edges."""
     avatar = avatar.convert("RGBA").resize((size, size), Image.LANCZOS)
-
-    big = size * SUPERSAMPLE
+    big = size * MASK_SUPERSAMPLE
     mask = Image.new("L", (big, big), 0)
     ImageDraw.Draw(mask).ellipse((0, 0, big - 1, big - 1), fill=255)
     mask = mask.resize((size, size), Image.LANCZOS)
-
     out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     out.paste(avatar, (0, 0), mask)
     return out
 
 
-def _draw_body_line(
-    draw: ImageDraw.ImageDraw,
-    x: int,
-    y: int,
-    line: str,
-    font,
-    line_height: int,
-    theme: Theme,
-    highlight: bool,
-) -> None:
-    parts = MENTION_RE.split(line) if highlight else [line]
-    for i, part in enumerate(parts):
-        if not part:
-            continue
-        width = _text_width(draw, part, font)
-        if highlight and i % 2 == 1:
-            draw.rounded_rectangle(
-                (x - 3, y, x + width + 3, y + line_height),
-                radius=4,
-                fill=theme.mention_bg,
-            )
-            draw.text((x, y), part, font=font, fill=theme.mention_fg)
-        else:
-            draw.text((x, y), part, font=font, fill=theme.body)
-        x += width
+@lru_cache(maxsize=256)
+def _emoji_image(emoji: str, size: int) -> Optional[Image.Image]:
+    """Render a Unicode emoji with the bundled Noto Color Emoji font."""
+    try:
+        font = ImageFont.truetype(str(FONT_DIR / EMOJI_FONT), 109)
+    except OSError:
+        return None
+    canvas = Image.new("RGBA", (136, 128), (0, 0, 0, 0))
+    try:
+        ImageDraw.Draw(canvas).text((0, 0), emoji, font=font, embedded_color=True)
+    except Exception:
+        return None
+    if canvas.getbbox() is None:
+        return None
+    height = max(1, int(round(size * 128 / 136)))
+    scaled = canvas.resize((size, height), Image.LANCZOS)
+    square = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    square.paste(scaled, (0, (size - height) // 2))
+    return square
 
 
-def _prepare_attachment(data: bytes, max_w: int, max_h: int) -> Image.Image:
-    """Decode an attached image (first frame), shrink to fit, round corners."""
-    with Image.open(io.BytesIO(data)) as raw:
-        im = raw.convert("RGBA")  # first frame for animated images
-    scale = min(max_w / im.width, max_h / im.height, 1.0)
-    size = (max(1, int(im.width * scale)), max(1, int(im.height * scale)))
-    if size != im.size:
-        im = im.resize(size, Image.LANCZOS)
-    mask = _rounded_mask(im.size, 12)
-    im.putalpha(ImageChops.multiply(im.getchannel("A"), mask))
-    return im
-
-
-def parse_reactions(raw: str | None) -> list[tuple[str, int]]:
-    """'👍 3, 🔥 2 😂' -> [('👍', 3), ('🔥', 2), ('😂', 1)]. Custom emoji
-    like <:name:123> are supported; plain words are ignored."""
+def parse_reactions(raw: Optional[str]) -> list[tuple[str, int]]:
+    """'💀 4, 🔥 2' -> [('💀', 4), ('🔥', 2)]. A missing count means 1.
+    Only Unicode emoji are supported; plain words are ignored."""
     out: list[tuple[str, int]] = []
     if not raw:
         return out
@@ -253,194 +260,297 @@ def parse_reactions(raw: str | None) -> list[tuple[str, int]]:
         if token.isdigit():
             if out:
                 out[-1] = (out[-1][0], max(1, min(int(token), 999999)))
-            continue
-        if CUSTOM_EMOJI_RE.fullmatch(token) or any(ord(c) > 127 for c in token):
+        elif any(ord(c) > 127 for c in token):
             out.append((token, 1))
         if len(out) >= MAX_REACTIONS:
             break
-    return out[:MAX_REACTIONS]
+    return out
 
 
-def emoji_url(emoji: str) -> str:
-    custom = CUSTOM_EMOJI_RE.fullmatch(emoji)
-    if custom:
-        return CUSTOM_EMOJI_URL.format(id=custom.group(1))
-    if "‍" not in emoji:
-        emoji = emoji.replace("️", "")
-    return TWEMOJI_URL.format(name="-".join(f"{ord(c):x}" for c in emoji))
+def _decode_attachment(data: bytes, animated: bool) -> tuple[list[Image.Image], list[int]]:
+    """Return RGBA frames and per-frame durations (ms)."""
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    with Image.open(io.BytesIO(data)) as im:
+        if animated and getattr(im, "is_animated", False):
+            for i, frame in enumerate(ImageSequence.Iterator(im)):
+                if i >= MAX_GIF_FRAMES:
+                    break
+                frames.append(frame.convert("RGBA"))
+                durations.append(max(20, int(frame.info.get("duration", 100) or 100)))
+        else:
+            frames.append(im.convert("RGBA"))
+            durations.append(0)
+    return frames, durations
 
 
-def render_quote_card(
+def default_timestamp(tz_name: Optional[str] = None) -> str:
+    """'Today at 8:44 PM' in CARD_TIMEZONE (default UTC)."""
+    tz_name = tz_name or os.environ.get("CARD_TIMEZONE", "UTC")
+    try:
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now = datetime.now(timezone.utc)
+    return f"Today at {now.strftime('%I:%M %p').lstrip('0')}"
+
+
+# ----------------------------------------------------------------- renderer
+
+
+def render_message_card(
     *,
     avatar_bytes: bytes,
     name: str,
-    clan_tag: str | None,
-    timestamp: str | None,
+    name_color: Optional[RGB],
+    clan_tag: Optional[str],
+    is_app: bool,
+    timestamp: str,
     text: str,
     theme_name: str = "dark",
-    font_name: str = "Inter",
-    attachment_bytes: bytes | None = None,
-    reactions: list[tuple[bytes, int]] | None = None,
-    mention_highlight: bool = True,
+    font_key: str = "default",
+    attachment_bytes: Optional[bytes] = None,
+    reactions: Optional[list[tuple[str, int]]] = None,
+    row_highlight: bool = False,
     as_gif: bool = False,
 ) -> tuple[io.BytesIO, str]:
-    """Render the chat card. Returns (file buffer, extension). Blocking."""
+    """Render the card at 2x, downsample with LANCZOS. Returns (buffer, ext)."""
     theme = THEMES.get(theme_name, THEMES["dark"])
 
-    name_font = _load_font(font_name, True, NAME_FONT_SIZE)
-    time_font = _load_font(font_name, False, TIME_FONT_SIZE)
-    body_font = _load_font(font_name, False, BODY_FONT_SIZE)
-    tag_font = _load_font(font_name, True, TAG_FONT_SIZE)
-    count_font = _load_font(font_name, True, COUNT_FONT_SIZE)
+    name_file, name_style = DISPLAY_FONTS.get(font_key, DISPLAY_FONTS["default"])
+    name_font = _font(name_file, name_style, px(NAME_SIZE))
+    body_font = _ui(BODY_SIZE)
+    time_font = _ui(TIME_SIZE)
+    chip_font = _ui(12, "Bold")
+    app_font = _ui(10, "Bold")
+    count_font = _ui(14, "SemiBold")
 
-    # Scratch canvas for measuring text before we know the final height.
     measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
-    text_left = PADDING + AVATAR_SIZE + AVATAR_TEXT_GAP
-    header_width = CANVAS_WIDTH - text_left - PADDING
-    body_width = CANVAS_WIDTH - 2 * PADDING
+    def width(value: str, font) -> int:
+        return int(round(measure.textlength(value, font=font)))
 
-    # Clan tag pill, shown next to the name.
-    tag = (clan_tag or "").strip()[:4] or None
-    tag_w = int(_text_width(measure, tag, tag_font)) + 16 if tag else 0
-    tag_h = 28
-    name_max = header_width - (tag_w + 10 if tag else 0)
+    text_x = px(PAD + AVATAR + AVATAR_GAP)
+    max_col = px(MAX_COL)
+    line_h = px(LINE_H)
+    resolved_name_color = name_color or theme.name_default
 
-    # Truncate the display name if it would overflow the header area.
+    # ---- header pieces: name, [clan tag], [APP badge], timestamp
+    chip_text = (clan_tag or "").strip()[:4] or None
+    chip_w = width(chip_text, chip_font) + px(10) if chip_text else 0
+    chip_h = px(16)
+    app_w = width("APP", app_font) + px(8)
+    app_h = px(15)
+    time_w = width(timestamp, time_font)
+
+    extras = (px(4) + chip_w if chip_text else 0) + (px(4) + app_w if is_app else 0)
+    time_block = px(8) + time_w
+    name_max = max(px(40), max_col - extras - time_block)
+
     shown_name = name
-    if _text_width(measure, shown_name, name_font) > name_max:
-        while len(shown_name) > 1 and _text_width(measure, shown_name + "…", name_font) > name_max:
+    if width(shown_name, name_font) > name_max:
+        while len(shown_name) > 1 and width(shown_name + "…", name_font) > name_max:
             shown_name = shown_name[:-1]
         shown_name += "…"
+    name_w = width(shown_name, name_font)
+    header_w = name_w + extras + time_block
 
-    body_lines = _wrap_text(measure, text, body_font, body_width)
-    body_ascent, body_descent = body_font.getmetrics()
-    body_line_h = body_ascent + body_descent
-    line_step = body_line_h + LINE_SPACING
-    body_height = line_step * len(body_lines) - LINE_SPACING
+    # ---- body
+    body_lines = _wrap_text(measure, text, body_font, max_col)
+    body_w = max((width(line, body_font) for line in body_lines), default=0)
 
-    # Optional attached image.
-    attachment = None
+    # ---- attachment
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    att_w = att_h = 0
     if attachment_bytes:
-        attachment = _prepare_attachment(attachment_bytes, body_width, MAX_ATTACHMENT_HEIGHT)
+        frames, durations = _decode_attachment(attachment_bytes, animated=as_gif)
+        src_w, src_h = frames[0].size
+        w1 = min(src_w, ATTACH_MAX_W)
+        h1 = src_h * w1 / src_w
+        if h1 > ATTACH_MAX_H:
+            w1 = w1 * ATTACH_MAX_H / h1
+            h1 = ATTACH_MAX_H
+        att_w, att_h = max(1, px(w1)), max(1, px(h1))
+        att_mask = _rounded_mask((att_w, att_h), px(ATTACH_RADIUS))
+        prepared = []
+        for frame in frames:
+            resized = frame.resize((att_w, att_h), Image.LANCZOS)
+            resized.putalpha(ImageChops.multiply(resized.getchannel("A"), att_mask))
+            prepared.append(resized)
+        frames = prepared
 
-    # Optional reactions, laid out in wrapped rows.
-    reaction_items: list[tuple[Image.Image, str, int]] = []
-    for emoji_bytes, count in reactions or []:
-        try:
-            with Image.open(io.BytesIO(emoji_bytes)) as raw:
-                emoji_img = raw.convert("RGBA").resize((EMOJI_SIZE, EMOJI_SIZE), Image.LANCZOS)
-        except (OSError, ValueError):
-            continue
-        reaction_items.append((emoji_img, str(count), count))
-
-    placed: list[tuple[int, int, int, Image.Image, str]] = []  # x, row, width, img, label
+    # ---- reactions (wrapped rows of pills)
+    pill_items: list[tuple[int, int, int, Image.Image, str]] = []  # x, row, w, emoji, label
+    react_w = 0
     rows = 0
-    if reaction_items:
+    if reactions:
         x = 0
-        for emoji_img, label, _ in reaction_items:
-            w = REACTION_PAD + EMOJI_SIZE + 8 + int(_text_width(measure, label, count_font)) + REACTION_PAD
-            if x and x + w > body_width:
+        for emoji, count in reactions:
+            emoji_img = _emoji_image(emoji, px(REACTION_EMOJI))
+            if emoji_img is None:
+                continue
+            label = str(count)
+            w = px(REACTION_PAD) * 2 + px(REACTION_EMOJI) + px(6) + width(label, count_font)
+            if x and x + w > max_col:
                 x = 0
                 rows += 1
-            placed.append((x, rows, w, emoji_img, label))
-            x += w + REACTION_GAP
-        rows += 1
-    reactions_height = rows * REACTION_HEIGHT + max(0, rows - 1) * REACTION_GAP
+            pill_items.append((x, rows, w, emoji_img, label))
+            react_w = max(react_w, x + w)
+            x += w + px(REACTION_GAP)
+        if pill_items:
+            rows += 1
+    react_h = rows * px(REACTION_H) + max(0, rows - 1) * px(REACTION_GAP)
 
-    height = PADDING + AVATAR_SIZE + HEADER_BODY_GAP + body_height
-    if attachment is not None:
-        height += BLOCK_GAP + attachment.height
-    if placed:
-        height += BLOCK_GAP + reactions_height
-    height += PADDING
+    # ---- card size
+    content_w = min(max_col, max(header_w, body_w, att_w, react_w))
+    card_w = text_x + content_w + px(PAD)
 
-    image = Image.new("RGB", (CANVAS_WIDTH, height), theme.background)
-    draw = ImageDraw.Draw(image)
+    y = px(PAD)
+    header_top = y
+    y += line_h
+    body_top = y
+    y += line_h * len(body_lines)
+    att_y = react_y = 0
+    if frames:
+        y += px(ATTACH_GAP)
+        att_y = y
+        y += att_h
+    if pill_items:
+        y += px(REACTION_GAP)
+        react_y = y
+        y += react_h
+    card_h = max(y, px(PAD + AVATAR_TOP_OFFSET + AVATAR)) + px(PAD)
 
-    # Avatar (fall back to a plain circle if the image can't be decoded)
+    # make both dimensions divisible by S so the downsample is exact
+    card_w += card_w % S
+    card_h += card_h % S
+
+    # ---- draw (2x)
+    base = Image.new("RGB", (card_w, card_h), theme.highlight_bg if row_highlight else theme.bg)
+    draw = ImageDraw.Draw(base)
+
+    if row_highlight:
+        draw.rectangle((0, 0, px(3) - 1, card_h), fill=AMBER)
+
+    # avatar
     try:
         with Image.open(io.BytesIO(avatar_bytes)) as raw:
             raw.load()
-            avatar = _circular_avatar(raw, AVATAR_SIZE)
+            avatar = _circular_avatar(raw, px(AVATAR))
     except (OSError, ValueError, Image.DecompressionBombError):
-        placeholder = Image.new("RGB", (AVATAR_SIZE, AVATAR_SIZE), theme.placeholder)
-        avatar = _circular_avatar(placeholder, AVATAR_SIZE)
-    image.paste(avatar, (PADDING, PADDING), avatar)
+        avatar = _circular_avatar(Image.new("RGB", (8, 8), (114, 118, 125)), px(AVATAR))
+    base.paste(avatar, (px(PAD), px(PAD + AVATAR_TOP_OFFSET)), avatar)
 
-    # Name (+ clan tag) and optional timestamp, centred beside the avatar
-    name_ascent, name_descent = name_font.getmetrics()
-    time_ascent, time_descent = time_font.getmetrics()
-    name_h = name_ascent + name_descent
-    time_h = time_ascent + time_descent
-    block_h = name_h + (4 + time_h if timestamp else 0)
-    block_top = PADDING + (AVATAR_SIZE - block_h) // 2
+    # header row, baseline-aligned
+    baseline = _baseline(name_font, header_top, line_h)
+    draw.text((text_x, baseline), shown_name, font=name_font, fill=resolved_name_color, anchor="ls")
+    x = text_x + name_w
+    center_y = header_top + line_h // 2
 
-    draw.text((text_left, block_top), shown_name, font=name_font, fill=theme.name)
-    if tag:
-        tag_x = text_left + int(_text_width(draw, shown_name, name_font)) + 10
-        tag_y = block_top + (name_h - tag_h) // 2
+    if chip_text:
+        x += px(4)
+        top = center_y - chip_h // 2
+        draw.rounded_rectangle((x, top, x + chip_w, top + chip_h), radius=px(4), fill=theme.chip_bg)
+        draw.text(
+            (x + chip_w // 2, _baseline(chip_font, top, chip_h)),
+            chip_text,
+            font=chip_font,
+            fill=resolved_name_color,
+            anchor="ms",
+        )
+        x += chip_w
+    if is_app:
+        x += px(4)
+        top = center_y - app_h // 2 + px(0.5)
+        draw.rounded_rectangle((x, top, x + app_w, top + app_h), radius=px(3), fill=BLURPLE)
+        draw.text(
+            (x + app_w // 2, _baseline(app_font, top, app_h)),
+            "APP",
+            font=app_font,
+            fill=(255, 255, 255),
+            anchor="ms",
+        )
+        x += app_w
+    x += px(8)
+    draw.text((x, baseline), timestamp, font=time_font, fill=theme.timestamp, anchor="ls")
+
+    # body lines, with inline @mention pills
+    for i, line in enumerate(body_lines):
+        if not line:
+            continue
+        top = body_top + i * line_h
+        line_baseline = _baseline(body_font, top, line_h)
+        cursor = text_x
+        for j, part in enumerate(MENTION_RE.split(line)):
+            if not part:
+                continue
+            part_w = measure.textlength(part, font=body_font)
+            if j % 2 == 1:
+                draw.rounded_rectangle(
+                    (cursor, top + px(1), cursor + part_w + px(4), top + line_h - px(1)),
+                    radius=px(3),
+                    fill=theme.mention_bg,
+                )
+                draw.text((cursor + px(2), line_baseline), part, font=body_font, fill=theme.mention_fg, anchor="ls")
+                cursor += part_w + px(4)
+            else:
+                draw.text((cursor, line_baseline), part, font=body_font, fill=theme.body, anchor="ls")
+                cursor += part_w
+
+    # reaction pills
+    for px_x, row, w, emoji_img, label in pill_items:
+        left = text_x + px_x
+        top = react_y + row * (px(REACTION_H) + px(REACTION_GAP))
         draw.rounded_rectangle(
-            (tag_x, tag_y, tag_x + tag_w, tag_y + tag_h), radius=6, fill=theme.tag_bg
+            (left, top, left + w, top + px(REACTION_H)),
+            radius=px(REACTION_RADIUS),
+            fill=theme.pill_bg,
+            outline=theme.pill_border,
+            width=px(1),
+        )
+        base.paste(
+            emoji_img,
+            (left + px(REACTION_PAD), top + (px(REACTION_H) - px(REACTION_EMOJI)) // 2),
+            emoji_img,
         )
         draw.text(
-            (tag_x + 8, tag_y + (tag_h - TAG_FONT_SIZE) // 2 - 2),
-            tag,
-            font=tag_font,
-            fill=theme.tag_fg,
-        )
-    if timestamp:
-        draw.text(
-            (text_left, block_top + name_h + 4),
-            timestamp,
-            font=time_font,
-            fill=theme.timestamp,
+            (left + px(REACTION_PAD) + px(REACTION_EMOJI) + px(6), top + px(REACTION_H) // 2),
+            label,
+            font=count_font,
+            fill=theme.pill_count,
+            anchor="lm",
         )
 
-    # Body text
-    y = PADDING + AVATAR_SIZE + HEADER_BODY_GAP
-    for line in body_lines:
-        if line:
-            _draw_body_line(
-                draw, PADDING, y, line, body_font, body_line_h, theme, mention_highlight
-            )
-        y += line_step
-    y -= LINE_SPACING
+    # ---- downsample (+ attachment frames) and encode
+    out_size = (card_w // S, card_h // S)
 
-    # Attached image
-    if attachment is not None:
-        y += BLOCK_GAP
-        image.paste(attachment, (PADDING, y), attachment)
-        y += attachment.height
-
-    # Reactions
-    if placed:
-        y += BLOCK_GAP
-        for x, row, w, emoji_img, label in placed:
-            top = y + row * (REACTION_HEIGHT + REACTION_GAP)
-            left = PADDING + x
-            draw.rounded_rectangle(
-                (left, top, left + w, top + REACTION_HEIGHT), radius=8, fill=theme.pill_bg
-            )
-            image.paste(
-                emoji_img,
-                (left + REACTION_PAD, top + (REACTION_HEIGHT - EMOJI_SIZE) // 2),
-                emoji_img,
-            )
-            draw.text(
-                (left + REACTION_PAD + EMOJI_SIZE + 8, top + REACTION_HEIGHT // 2),
-                label,
-                font=count_font,
-                fill=theme.pill_fg,
-                anchor="lm",
-            )
+    def finish(frame_img: Optional[Image.Image]) -> Image.Image:
+        canvas = base.copy() if frame_img is not None else base
+        if frame_img is not None:
+            canvas.paste(frame_img, (text_x, att_y), frame_img)
+        return canvas.resize(out_size, Image.LANCZOS)
 
     buffer = io.BytesIO()
     if as_gif:
-        image.convert("P", palette=Image.ADAPTIVE, colors=256).save(buffer, format="GIF")
+        outputs = [finish(f) for f in frames] if frames else [finish(None)]
+        paletted = [im.convert("P", palette=Image.ADAPTIVE, colors=256) for im in outputs]
+        if len(paletted) > 1:
+            paletted[0].save(
+                buffer,
+                format="GIF",
+                save_all=True,
+                append_images=paletted[1:],
+                duration=durations,
+                loop=0,
+                disposal=2,
+            )
+        else:
+            paletted[0].save(buffer, format="GIF")
         ext = "gif"
     else:
-        image.save(buffer, format="PNG")
+        finish(frames[0] if frames else None).save(buffer, format="PNG", optimize=True)
         ext = "png"
     buffer.seek(0)
     return buffer, ext
@@ -459,7 +569,7 @@ class MessageCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.session: aiohttp.ClientSession | None = None
+        self.session: Optional[aiohttp.ClientSession] = None
 
     async def cog_load(self) -> None:
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
@@ -485,67 +595,55 @@ class MessageCog(commands.Cog):
             raise ValueError("Download was empty.")
         return bytes(data)
 
-    async def _fetch_avatar(self, user: discord.abc.User) -> bytes:
-        url = user.display_avatar.replace(size=256, format="png").url
-        return await self._fetch_bytes(url, MAX_AVATAR_BYTES)
-
-    async def _fetch_emoji(self, emoji: str, count: int) -> tuple[bytes, int] | None:
-        try:
-            return await self._fetch_bytes(emoji_url(emoji), MAX_EMOJI_BYTES), count
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
-            log.warning("Could not fetch emoji %r", emoji)
-            return None
-
     @discord_group.command(
         name="message",
-        description="Generate a Discord-style message image for a user.",
+        description="Generate a Discord-style message image.",
     )
     @app_commands.describe(
-        user="The user the message is shown as",
-        text="The message text to render",
+        text="The message content",
+        user="Who the message is shown as (defaults to you)",
         theme="Card theme (default: dark)",
-        display_font="Font used on the card (default: Inter)",
+        display_font="Display name font (default: default)",
         image="An image to show under the message",
-        timestamp="Show the timestamp (default: yes)",
-        mention_highlight="Highlight @mentions in the text (default: yes)",
-        reactions="Reactions, e.g. '👍 3 🔥 2' (custom emoji supported)",
-        togif="Send the result as a GIF instead of a PNG",
+        timestamp="Custom timestamp text (default: Today at <current time>)",
+        mention_highlight="Highlight the row like a mention (amber tint and bar)",
+        reactions="Reactions, e.g. '💀 4, 🔥 2'",
+        togif="Output a GIF instead of a PNG",
         use_username="Show the username instead of the display name",
-        hide_clantags="Hide the user's clan tag",
+        hide_clantags="Hide the clan tag next to the name",
     )
     async def message(
         self,
         interaction: discord.Interaction,
-        user: discord.User,
         text: app_commands.Range[str, 1, MAX_TEXT_LENGTH],
-        theme: Literal["dark", "light"] = "dark",
-        display_font: FontName = "Inter",
-        image: discord.Attachment | None = None,
-        timestamp: bool = True,
-        mention_highlight: bool = True,
-        reactions: str | None = None,
+        user: Optional[Union[discord.Member, discord.User]] = None,
+        theme: ThemeName = "dark",
+        display_font: FontChoice = "default",
+        image: Optional[discord.Attachment] = None,
+        timestamp: Optional[str] = None,
+        mention_highlight: bool = False,
+        reactions: Optional[str] = None,
         togif: bool = False,
         use_username: bool = False,
         hide_clantags: bool = False,
     ) -> None:
         await interaction.response.defer(thinking=True)
+        target = user or interaction.user
 
         if image is not None:
             if not (image.content_type or "").startswith("image/"):
                 await interaction.followup.send("The attachment must be an image.", ephemeral=True)
                 return
             if image.size > MAX_IMAGE_BYTES:
-                await interaction.followup.send(
-                    "That image is too large (max 8 MB).", ephemeral=True
-                )
+                await interaction.followup.send("That image is too large (max 8 MB).", ephemeral=True)
                 return
 
         try:
-            avatar_bytes = await self._fetch_avatar(user)
+            avatar_url = target.display_avatar.replace(size=128, format="png").url
+            avatar_bytes = await self._fetch_bytes(avatar_url, MAX_AVATAR_BYTES)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             await interaction.followup.send(
-                "Couldn't download that user's avatar. Please try again.",
-                ephemeral=True,
+                "Couldn't download that user's avatar. Please try again.", ephemeral=True
             )
             return
 
@@ -555,40 +653,39 @@ class MessageCog(commands.Cog):
                 attachment_bytes = await self._fetch_bytes(image.url, MAX_IMAGE_BYTES)
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
                 await interaction.followup.send(
-                    "Couldn't download the attached image. Please try again.",
-                    ephemeral=True,
+                    "Couldn't download the attached image. Please try again.", ephemeral=True
                 )
                 return
 
-        parsed = parse_reactions((reactions or "")[:200])
-        fetched = await asyncio.gather(*(self._fetch_emoji(e, c) for e, c in parsed))
-        reaction_images = [r for r in fetched if r is not None]
+        colour = getattr(target, "color", None)
+        name_color: Optional[RGB] = None
+        if colour is not None and getattr(colour, "value", 0) != 0:
+            name_color = (colour.r, colour.g, colour.b)
 
-        name = user.name if use_username else user.display_name
         clan_tag = None
         if not hide_clantags:
-            clan_tag = getattr(getattr(user, "primary_guild", None), "tag", None)
-        stamp = discord.utils.utcnow().strftime("%Y-%m-%d %H:%M UTC") if timestamp else None
+            clan_tag = getattr(getattr(target, "primary_guild", None), "tag", None)
 
         try:
             buffer, ext = await asyncio.to_thread(
-                render_quote_card,
+                render_message_card,
                 avatar_bytes=avatar_bytes,
-                name=name,
+                name=target.name if use_username else target.display_name,
+                name_color=name_color,
                 clan_tag=clan_tag,
-                timestamp=stamp,
+                is_app=bool(getattr(target, "bot", False)),
+                timestamp=(timestamp or "").strip()[:60] or default_timestamp(),
                 text=text,
                 theme_name=theme,
-                font_name=display_font,
+                font_key=display_font,
                 attachment_bytes=attachment_bytes,
-                reactions=reaction_images,
-                mention_highlight=mention_highlight,
+                reactions=parse_reactions((reactions or "")[:300]),
+                row_highlight=mention_highlight,
                 as_gif=togif,
             )
         except Exception:
             await interaction.followup.send(
-                "Something went wrong while rendering the image.",
-                ephemeral=True,
+                "Something went wrong while rendering the image.", ephemeral=True
             )
             raise
 
