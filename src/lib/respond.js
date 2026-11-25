@@ -32,7 +32,7 @@ async function editReply(interaction, payload, { fetchImpl = fetch, log = consol
   const errors = [];
 
   try {
-    await raw('PATCH', `${base}/messages/@original`, body, { fetchImpl });
+    await raw('PATCH', `${base}/messages/@original`, body, { fetchImpl, files: payload.files, timeoutMs: payload.files ? 15000 : 8000 });
     log.log(`[Reply] ${name} delivered (direct) in ${Date.now() - started}ms`);
     return;
   } catch (error) {
@@ -47,7 +47,7 @@ async function editReply(interaction, payload, { fetchImpl = fetch, log = consol
   }
   try {
     const flags = interaction.ephemeral ? EPHEMERAL : undefined;
-    await raw('POST', base, { ...body, ...(flags ? { flags } : {}) }, { fetchImpl });
+    await raw('POST', base, { ...body, ...(flags ? { flags } : {}) }, { fetchImpl, files: payload.files });
     log.log(`[Reply] ${name} delivered (follow-up) in ${Date.now() - started}ms`);
     return;
   } catch (error) {
@@ -66,7 +66,7 @@ async function reply(interaction, payload, { update = false, fetchImpl = fetch, 
   const started = Date.now();
   const name = interaction.commandName || interaction.customId || 'interaction';
   try {
-    await raw('POST', `/interactions/${interaction.id}/${interaction.token}/callback`, { type: update ? 7 : 4, data: toBody(payload) }, { fetchImpl, timeoutMs: 2500 });
+    await raw('POST', `/interactions/${interaction.id}/${interaction.token}/callback`, { type: update ? 7 : 4, data: toBody(payload) }, { fetchImpl, timeoutMs: 2500, files: payload.files });
     log.log(`[Reply] ${name} answered (direct) in ${Date.now() - started}ms`);
     return;
   } catch (error) {

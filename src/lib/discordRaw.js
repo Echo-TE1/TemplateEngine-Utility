@@ -15,14 +15,25 @@ function toBody(payload) {
   if (payload.components) body.components = payload.components.map(json);
   if (payload.allowedMentions) body.allowed_mentions = payload.allowedMentions;
   if (payload.flags !== undefined) body.flags = payload.flags;
+  if (payload.files && payload.files.length) body.attachments = payload.files.map((f, id) => ({ id, filename: f.name }));
   return body;
 }
 
-async function raw(method, path, body, { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
+/** Files ({ attachment: Buffer, name }) go up as multipart form data; everything else is plain JSON. */
+function encode(body, files) {
+  if (!files || !files.length) return { headers: { 'Content-Type': 'application/json' }, payload: JSON.stringify(body) };
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify(body));
+  files.forEach((f, i) => form.append(`files[${i}]`, new Blob([f.attachment]), f.name));
+  return { headers: {}, payload: form }; // fetch sets the multipart boundary itself
+}
+
+async function raw(method, path, body, { fetchImpl = fetch, timeoutMs = 8000, files } = {}) {
+  const { headers, payload } = encode(body, files);
   const response = await fetchImpl(`${API}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', 'User-Agent': 'roblox-outage-tracker/1.0' },
-    body: JSON.stringify(body),
+    headers: { ...headers, 'User-Agent': 'roblox-outage-tracker/1.0' },
+    body: payload,
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status >= 200 && response.status < 300) return;
@@ -35,4 +46,4 @@ async function raw(method, path, body, { fetchImpl = fetch, timeoutMs = 8000 } =
   throw new Error(`Discord answered HTTP ${response.status} ${detail}`.trim());
 }
 
-module.exports = { toBody, raw };
+module.exports = { toBody, raw, encode };
