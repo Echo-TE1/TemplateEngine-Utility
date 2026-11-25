@@ -1,7 +1,7 @@
 {
-  "name": "roblox-outage-tracker",
+  "name": "mock-quote-bot",
   "version": "1.0.0",
-  "description": "Discord bot that tracks Roblox outages and incidents and keeps a live status message up to date.",
+  "description": "Discord bot that makes quote cards of real messages and clearly labelled mock-up messages.",
   "main": "index.js",
   "private": true,
   "engines": {

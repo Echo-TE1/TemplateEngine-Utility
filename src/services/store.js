@@ -1,99 +1,44 @@
 'use strict';
 
-// Remembers: the tracker state (so nothing is announced twice after a restart), the incident history,
-// the log channels set with /setup log, and small named documents (health checks, games, roles, ...).
-// MongoDB when MONGO_URI is set, otherwise JSON files in DATA_DIR.
+// Remembers small named documents (for example who allowed mock-ups of themselves).
+// MongoDB when MONGO_URI is set, otherwise a JSON file in DATA_DIR (lost when a free host redeploys).
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { emptyState } = require('../lib/diff');
 
-// ---------------------------------------------------------------------------------------
-// JSON files (fallback)
-// ---------------------------------------------------------------------------------------
 class JsonStore {
-  constructor(dir, historyLimit) {
+  constructor(dir) {
     this.kind = 'local files';
-    this.persistent = false; // on hosts with a temporary disk (Render free plan) this is lost on redeploy
+    this.persistent = false;
     this.fellBack = false; // true when MongoDB was configured but could not be used
-    this.historyLimit = historyLimit;
-    this.stateFile = path.join(dir, 'roblox-state.json');
-    this.historyFile = path.join(dir, 'roblox-history.json');
-    this.logChannelsFile = path.join(dir, 'log-channels.json');
     this.docsFile = path.join(dir, 'documents.json');
   }
 
-  async #read(file, fallback) {
+  async #read() {
     try {
-      return JSON.parse(await fs.readFile(file, 'utf8'));
+      return JSON.parse(await fs.readFile(this.docsFile, 'utf8'));
     } catch (error) {
-      if (error.code !== 'ENOENT') console.warn(`[Store] Could not read ${file}: ${error.message}`);
-      return fallback;
+      if (error.code !== 'ENOENT') console.warn(`[Store] Could not read ${this.docsFile}: ${error.message}`);
+      return {};
     }
   }
 
-  async #write(file, data) {
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const temp = `${file}.tmp`;
-    await fs.writeFile(temp, JSON.stringify(data, null, 2));
-    await fs.rename(temp, file); // atomic, so a crash never leaves half a file
-  }
-
-  async loadState() {
-    return { ...emptyState(), ...(await this.#read(this.stateFile, {})) };
-  }
-
-  async saveState(state) {
-    await this.#write(this.stateFile, state);
-  }
-
-  async addHistory(record) {
-    const all = await this.#read(this.historyFile, []);
-    const rest = all.filter((r) => r.id !== record.id); // same incident twice -> keep one
-    await this.#write(this.historyFile, [record, ...rest].slice(0, this.historyLimit));
-  }
-
-  async getHistory(limit) {
-    const all = await this.#read(this.historyFile, []);
-    return all
-      .sort((a, b) => String(b.resolvedAt).localeCompare(String(a.resolvedAt)))
-      .slice(0, limit);
-  }
-
-  async getLogChannels() {
-    return this.#read(this.logChannelsFile, {});
-  }
-
-  async setLogChannel(type, record) {
-    const all = await this.#read(this.logChannelsFile, {});
-    all[type] = record;
-    await this.#write(this.logChannelsFile, all);
-  }
-
-  async clearLogChannel(type) {
-    const all = await this.#read(this.logChannelsFile, {});
-    delete all[type];
-    await this.#write(this.logChannelsFile, all);
-  }
-
-  /** Small named document (an object), or {} if it was never saved. */
   async getDoc(name) {
-    const all = await this.#read(this.docsFile, {});
-    return all[name] || {};
+    return (await this.#read())[name] || {};
   }
 
   async setDoc(name, data) {
-    const all = await this.#read(this.docsFile, {});
+    const all = await this.#read();
     all[name] = data;
-    await this.#write(this.docsFile, all);
+    await fs.mkdir(path.dirname(this.docsFile), { recursive: true });
+    const temp = `${this.docsFile}.tmp`;
+    await fs.writeFile(temp, JSON.stringify(all, null, 2));
+    await fs.rename(temp, this.docsFile); // atomic, so a crash never leaves half a file
   }
 
   async close() {}
 }
 
-// ---------------------------------------------------------------------------------------
-// MongoDB
-// ---------------------------------------------------------------------------------------
 function dbNameFromUri(uri) {
   const found = /^mongodb(?:\+srv)?:\/\/[^/]+\/([^?]+)/.exec(uri);
   return found ? decodeURIComponent(found[1]) : null;
@@ -112,46 +57,7 @@ class MongoStore {
     const { MongoClient } = require('mongodb'); // loaded only when MONGO_URI is used
     this.client = new MongoClient(this.uri, { serverSelectionTimeoutMS: 8000 });
     await this.client.connect();
-    const db = this.client.db(this.dbName);
-    this.stateCol = db.collection('roblox_status');
-    this.historyCol = db.collection('roblox_incident_history');
-    this.settingsCol = db.collection('bot_settings');
-  }
-
-  async loadState() {
-    const doc = await this.stateCol.findOne({ _id: 'state' });
-    if (!doc) return emptyState();
-    const { _id, ...rest } = doc;
-    return { ...emptyState(), ...rest };
-  }
-
-  async saveState(state) {
-    await this.stateCol.replaceOne({ _id: 'state' }, { ...state, _id: 'state' }, { upsert: true });
-  }
-
-  async addHistory(record) {
-    // _id = incident id, so saving the same incident twice never creates a duplicate.
-    await this.historyCol.replaceOne({ _id: record.id }, { ...record, _id: record.id }, { upsert: true });
-  }
-
-  async getHistory(limit) {
-    const docs = await this.historyCol.find({}).sort({ resolvedAt: -1 }).limit(limit).toArray();
-    return docs.map(({ _id, ...rest }) => rest);
-  }
-
-  async getLogChannels() {
-    const doc = await this.settingsCol.findOne({ _id: 'log_channels' });
-    if (!doc) return {};
-    const { _id, ...rest } = doc;
-    return rest;
-  }
-
-  async setLogChannel(type, record) {
-    await this.settingsCol.updateOne({ _id: 'log_channels' }, { $set: { [type]: record } }, { upsert: true });
-  }
-
-  async clearLogChannel(type) {
-    await this.settingsCol.updateOne({ _id: 'log_channels' }, { $unset: { [type]: '' } });
+    this.settingsCol = this.client.db(this.dbName).collection('bot_settings');
   }
 
   async getDoc(name) {
@@ -184,9 +90,9 @@ async function createStore(config) {
       console.error(`[Store] MongoDB failed, using local files instead: ${error.message}`);
     }
   } else {
-    console.warn('[Store] MONGO_URI is not set. Using local files; history and log channels may be lost when the host redeploys.');
+    console.warn('[Store] MONGO_URI is not set. Using local files; settings are lost when the host redeploys.');
   }
-  const store = new JsonStore(config.dataDir, config.historyLimit);
+  const store = new JsonStore(config.dataDir);
   store.fellBack = fellBack;
   return store;
 }

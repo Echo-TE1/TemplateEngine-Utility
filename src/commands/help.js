@@ -2,21 +2,10 @@
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 
-const PUBLIC = [
-  ['/robloxstatus', 'Current Roblox status. Pick a view for incident history or uptime.'],
-  ['Search Roblox User', 'The button on the lookup panel: a private Roblox profile card.'],
-];
-
+const PUBLIC = [['/settings mock', 'Allow or stop others making labelled mock-up images of you.']];
 const OWNER = [
-  ['/setup log', 'Choose the channel for each log.'],
-  ['/setup role', 'Role pinged for a service.'],
-  ['/setup view / clear', 'See or remove log settings.'],
-  ['/reactionrole set', 'Post the reaction-role message.'],
-  ['/profile tracker panel', 'Post the Roblox lookup panel.'],
-  ['/channel create', 'Create a channel, optionally temporary.'],
   ['/quote', 'Quote card from a real message (link or ID), with a link to the original.'],
   ['/mock', 'Labelled mock-up message: invented name, yourself, or a member who opted in. Always watermarked.'],
-  ['/botstatus', 'Bot health and what each part is doing.'],
 ];
 
 const lines = (rows) => rows.map(([name, text]) => `**${name}**\n${text}`).join('\n\n');
@@ -26,18 +15,7 @@ module.exports = {
 
   async execute(interaction, context) {
     const owner = interaction.user.id === context.config.ownerId;
-    const fields = [{ name: 'For everyone', value: lines(PUBLIC) }];
-    if (owner) fields.push({ name: 'Owner only', value: lines(OWNER) });
-    await interaction.reply({
-      embeds: [
-        {
-          color: 0x5865f2,
-          title: 'Roblox tracker',
-          description: 'Watches Roblox and tells the server when something breaks, changes or recovers.',
-          fields,
-        },
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+    const embeds = [{ title: 'Commands', description: lines(owner ? [...OWNER, ...PUBLIC] : PUBLIC), color: 0x5865f2 }];
+    await interaction.reply({ embeds, flags: MessageFlags.Ephemeral });
   },
 };
