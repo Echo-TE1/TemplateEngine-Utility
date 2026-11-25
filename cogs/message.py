@@ -185,9 +185,14 @@ def render_quote_card(
     draw = ImageDraw.Draw(image)
 
     # Avatar
-    with Image.open(io.BytesIO(avatar_bytes)) as raw:
-        raw.load()
-        avatar = _circular_avatar(raw, AVATAR_SIZE)
+    try:
+        with Image.open(io.BytesIO(avatar_bytes)) as raw:
+            raw.load()
+            avatar = _circular_avatar(raw, AVATAR_SIZE)
+    except (OSError, ValueError, Image.DecompressionBombError):
+        # Unreadable avatar: draw a neutral placeholder instead of failing.
+        placeholder = Image.new("RGB", (AVATAR_SIZE, AVATAR_SIZE), (114, 118, 125))
+        avatar = _circular_avatar(placeholder, AVATAR_SIZE)
     image.paste(avatar, (PADDING, PADDING), avatar)
 
     # Name + timestamp, vertically centred beside the avatar
@@ -244,10 +249,16 @@ class MessageCog(commands.Cog):
         url = user.display_avatar.replace(size=256, format="png").url
         async with self.session.get(url) as resp:
             resp.raise_for_status()
-            data = await resp.content.read(MAX_AVATAR_BYTES + 1)
-        if len(data) > MAX_AVATAR_BYTES:
-            raise ValueError("Avatar is too large.")
-        return data
+            # StreamReader.read(n) may return only the first chunk (or
+            # nothing), so read the whole body in a loop with a size cap.
+            data = bytearray()
+            async for chunk in resp.content.iter_chunked(64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_AVATAR_BYTES:
+                    raise ValueError("Avatar is too large.")
+        if not data:
+            raise ValueError("Avatar download was empty.")
+        return bytes(data)
 
     @app_commands.command(
         name="quote",
