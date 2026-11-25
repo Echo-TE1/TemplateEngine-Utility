@@ -14,12 +14,11 @@ Image rendering only: no webhooks, no impersonation.
 | `user` | Who the message is shown as (defaults to you) |
 | `theme` | `dark` (default), `ash`, `onyx` or `light` |
 | `image` | Image shown under the text (rounded corners, scaled to fit) |
-| `timestamp` | Custom timestamp text (overrides the clock). The default clock follows `CARD_TIMEZONE` (e.g. `Asia/Tokyo`), else UTC |
-| `military_time` | 24-hour time in the default timestamp (`Today at 20:44`) |
+| `timestamp` | `12h` (default, `Today at 8:44 PM`), `24h` / `military` (`Today at 20:44`), or any text you type. The clock follows `CARD_TIMEZONE` (e.g. `Asia/Tokyo`), else UTC |
 | `mention_highlight` | Amber row tint and left bar, like a mention |
 | `reactions` | e.g. `💀 4, 🔥 2` (Unicode emoji; count defaults to 1) |
 | `togif` | Output a GIF (animated if the attached image is animated) |
-| `use_username` | Show `user.name` instead of the display name |
+| `use_username` | Show the username instead of the display name (default: display name) |
 | `hide_clantags` | Hide the clan tag |
 
 The card is drawn locally at 2x and downsampled with LANCZOS. Fonts and the

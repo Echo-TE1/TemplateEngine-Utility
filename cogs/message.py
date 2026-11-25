@@ -284,6 +284,25 @@ def _decode_attachment(data: bytes, animated: bool) -> tuple[list[Image.Image], 
     return frames, durations
 
 
+CLOCK_12 = {"12", "12h", "12hr", "12-hour", "12 hour", "normal", "regular", "am/pm", "ampm"}
+CLOCK_24 = {"24", "24h", "24hr", "24-hour", "24 hour", "military", "24-hour clock (military)"}
+
+
+def resolve_timestamp(value: Optional[str]) -> str:
+    """The timestamp text for the card.
+
+    Empty or a 12-hour keyword -> 'Today at 8:44 PM'
+    A 24-hour keyword (24h, military) -> 'Today at 20:44'
+    Anything else is shown exactly as typed."""
+    text = (value or "").strip()
+    key = text.lower()
+    if not text or key in CLOCK_12:
+        return default_timestamp(False)
+    if key in CLOCK_24:
+        return default_timestamp(True)
+    return text[:60]
+
+
 def default_timestamp(military: bool = False) -> str:
     """'Today at 8:44 PM' (or 'Today at 20:44' in 24-hour time).
     The clock follows the CARD_TIMEZONE env var (an IANA name, default UTC)."""
@@ -696,12 +715,11 @@ class MessageCog(commands.Cog):
         user="Who the message is shown as (defaults to you)",
         theme="Card theme (default: dark)",
         image="An image to show under the message",
-        timestamp="Custom timestamp text (overrides the clock)",
-        military_time="Use 24-hour time (e.g. 20:44) in the default timestamp",
+        timestamp="Pick 12h or 24h (military) time, or type your own text (default: 12h)",
         mention_highlight="Highlight the row like a mention (amber tint and bar)",
         reactions="Reactions, e.g. '💀 4, 🔥 2'",
         togif="Output a GIF instead of a PNG",
-        use_username="Show the username instead of the display name",
+        use_username="Show the @username instead of the display name (default: display name)",
         hide_clantags="Hide the clan tag next to the name",
     )
     async def message(
@@ -712,11 +730,10 @@ class MessageCog(commands.Cog):
         theme: ThemeName = "dark",
         image: Optional[discord.Attachment] = None,
         timestamp: Optional[str] = None,
-        military_time: bool = False,
         mention_highlight: bool = False,
         reactions: Optional[str] = None,
         togif: bool = False,
-        use_username: bool = False,
+        use_username: Optional[bool] = None,
         hide_clantags: bool = False,
     ) -> None:
         await interaction.response.defer(thinking=True)
@@ -764,13 +781,13 @@ class MessageCog(commands.Cog):
             buffer, ext = await asyncio.to_thread(
                 render_message_card,
                 avatar_bytes=avatar_bytes,
-                name=target.name if use_username else target.display_name,
+                name=target.name if use_username is True else target.display_name,
                 name_color=name_color,
                 clan_tag=clan_tag,
                 clan_badge=clan_badge,
                 mention_colors=mention_colors,
                 is_app=bool(getattr(target, "bot", False)),
-                timestamp=(timestamp or "").strip()[:60] or default_timestamp(military_time),
+                timestamp=resolve_timestamp(timestamp),
                 text=text,
                 theme_name=theme,
                 attachment_bytes=attachment_bytes,
@@ -785,6 +802,21 @@ class MessageCog(commands.Cog):
             raise
 
         await interaction.followup.send(file=discord.File(buffer, filename=f"message.{ext}"))
+
+    @message.autocomplete("timestamp")
+    async def timestamp_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        twelve, twenty_four = default_timestamp(False), default_timestamp(True)
+        choices = [
+            app_commands.Choice(name=f"12-hour clock - {twelve}", value="12h"),
+            app_commands.Choice(name=f"24-hour clock (military) - {twenty_four}", value="24h"),
+        ]
+        typed = current.strip()
+        if typed and typed.lower() not in CLOCK_12 | CLOCK_24:
+            choices.insert(0, app_commands.Choice(name=f"Custom: {typed[:80]}", value=typed[:100]))
+        return choices
+
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(MessageCog(bot))
