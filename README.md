@@ -6,14 +6,12 @@ A small Discord bot (Node.js, discord.js 14) that makes image cards from message
 
 | Command | Who | What it does |
 |---|---|---|
-| `/quote message:<link or ID>` | owner | Image card of a **real** message from this server (name, picture, time, text up to 500 characters) with a link to the original. Needs the Message Content intent to read text. |
-| `/mock text:<..> [name] [user] [color]` | owner | A **made-up** message as an image. Uses an invented name, yourself (leave `name` and `user` empty), or a member who turned mock-ups on. A name that matches a real member is refused. |
-| `/settings mock allow:<on/off>` | anyone | Allow or stop others making mock-ups of you. Everyone is **off** until they turn it on. |
+| `/settings mock allow:<on/off>` | anyone | Allow or stop others making labelled mock-ups of you. Everyone is **off** until they turn it on. (Stored for the message commands to check with `context.mockConsent.isAllowed(userId)`.) |
 | `/help` | anyone | Lists the commands you can use. |
 
-Every `/mock` image carries a full-strength watermark (`src/lib/watermark.js`): a tiled `MOCK` label across the whole picture and solid banners at the top and bottom, so it cannot be cropped out or passed off as a real message. Each mock-up of a member is logged as `[Mock]`. There are deliberately no commands that fake other people's messages, reports, friend requests or similar screens.
+The message commands are yours to write in `src/commands/message.js`. Ready-made helpers: `src/lib/messageCard.js` (draws a chat-style card), `src/lib/watermark.js` (full-strength tiled watermark), `src/lib/messageRef.js` (reads message links). The earlier `/quote` and `/mock` versions are in the git history (commit `401dccd`).
 
-All commands are owner-only (`BOT_OWNER_ID`) except those in `PUBLIC_COMMANDS` in `index.js`; add a name there to open a command to everyone.
+All commands are owner-only (`BOT_OWNER_ID`) except those in `PUBLIC_COMMANDS` in `index.js`.
 
 ## Setup
 
@@ -41,7 +39,7 @@ All commands are owner-only (`BOT_OWNER_ID`) except those in `PUBLIC_COMMANDS` i
 index.js                      start-up, command handling, owner gate
 keepAlive.js                  tiny web server for Render pings
 src/config.js                 environment variables
-src/commands/message.js       /quote and /mock (the message module)
+src/commands/message.js       empty message module (write your commands here)
 src/commands/                 settings.js, help.js
 src/services/mockConsent.js   who allowed mock-ups of themselves
 src/services/store.js         MongoDB or local JSON storage

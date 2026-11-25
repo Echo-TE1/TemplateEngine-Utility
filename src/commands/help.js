@@ -3,10 +3,7 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 
 const PUBLIC = [['/settings mock', 'Allow or stop others making labelled mock-up images of you.']];
-const OWNER = [
-  ['/quote', 'Quote card from a real message (link or ID), with a link to the original.'],
-  ['/mock', 'Labelled mock-up message: invented name, yourself, or a member who opted in. Always watermarked.'],
-];
+const OWNER = [];
 
 const lines = (rows) => rows.map(([name, text]) => `**${name}**\n${text}`).join('\n\n');
 
