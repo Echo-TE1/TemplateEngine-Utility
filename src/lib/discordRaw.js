@@ -32,7 +32,7 @@ async function raw(method, path, body, { fetchImpl = fetch, timeoutMs = 8000, fi
   const { headers, payload } = encode(body, files);
   const response = await fetchImpl(`${API}${path}`, {
     method,
-    headers: { ...headers, 'User-Agent': 'roblox-outage-tracker/1.0' },
+    headers: { ...headers, 'User-Agent': 'mock-quote-bot/1.0' },
     body: payload,
     signal: AbortSignal.timeout(timeoutMs),
   });
