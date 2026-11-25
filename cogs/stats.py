@@ -20,6 +20,7 @@ more than once).
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 from typing import Optional
@@ -118,12 +119,11 @@ class StatsCog(commands.Cog):
                 view_channel=True, connect=True, manage_channels=True
             ),
         }
-        channel = await guild.create_stage_channel(
-            name=name,
-            topic="Live bot stats",  # required by discord.py for stage channels
-            overwrites=overwrites,
-            reason="Live bot stats channel",
-        )
+        kwargs = {"name": name, "overwrites": overwrites, "reason": "Live bot stats channel"}
+        # Older discord.py versions require a topic; 2.7+ no longer accepts one.
+        if "topic" in inspect.signature(guild.create_stage_channel).parameters:
+            kwargs["topic"] = "Live bot stats"
+        channel = await guild.create_stage_channel(**kwargs)
         log.info("Created stage channel %r (%s)", name, channel.id)
         return channel
 
