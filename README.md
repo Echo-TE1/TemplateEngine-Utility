@@ -59,3 +59,7 @@ Pings in `text` (`<@id>`, `<@&role>`, `<#channel>`) are shown as `@name` /
 gray chip with the clan badge, like the Discord client. The command also works
 in DMs and group DMs; to use it outside servers the bot has to be installed to
 your account (Developer Portal > Installation > enable *User Install*).
+
+`!stats` (owner only) updates the stats channels right now and replies with what
+happened, including why they could not be created (not a Community server,
+missing Manage Channels, bot not in the server).

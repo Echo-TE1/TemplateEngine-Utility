@@ -52,6 +52,7 @@ class StatsCog(commands.Cog):
         self._dirty = True
         self._users_channel: Optional[discord.StageChannel] = None
         self._servers_channel: Optional[discord.StageChannel] = None
+        self.status = "not run yet"
 
     # ------------------------------------------------------------ counting
 
@@ -119,18 +120,29 @@ class StatsCog(commands.Cog):
         }
         channel = await guild.create_stage_channel(
             name=name,
+            topic="Live bot stats",  # required by discord.py for stage channels
             overwrites=overwrites,
             reason="Live bot stats channel",
         )
         log.info("Created stage channel %r (%s)", name, channel.id)
         return channel
 
-    async def _ensure(self, guild: discord.Guild) -> bool:
-        """Find (or create) both stage channels. Returns False if not possible."""
+    async def _ensure(self, guild: discord.Guild) -> Optional[str]:
+        """Find (or create) both stage channels. Returns None on success,
+        otherwise a short human-readable reason it could not."""
         if self._users_channel is None or guild.get_channel(self._users_channel.id) is None:
             self._users_channel = self._find_channel(guild, USERS_RE)
         if self._servers_channel is None or guild.get_channel(self._servers_channel.id) is None:
             self._servers_channel = self._find_channel(guild, SERVERS_RE)
+
+        if (self._users_channel is None or self._servers_channel is None) and (
+            "COMMUNITY" not in guild.features
+        ):
+            return "this server is not a Community server (Discord only allows stage channels there)"
+        if (self._users_channel is None or self._servers_channel is None) and not (
+            guild.me.guild_permissions.manage_channels
+        ):
+            return "the bot is missing the Manage Channels permission"
 
         try:
             if self._users_channel is None:
@@ -142,13 +154,10 @@ class StatsCog(commands.Cog):
                     guild, servers_name(self.server_count())
                 )
         except discord.Forbidden:
-            log.warning("Missing Manage Channels permission in guild %s", guild.id)
-            return False
+            return "Discord refused: the bot lacks permission to create channels"
         except discord.HTTPException as exc:
-            # Most often: the server is not a Community server (no stage channels).
-            log.warning("Could not create stage channel in guild %s: %s", guild.id, exc)
-            return False
-        return True
+            return f"Discord rejected creating the stage channel: {exc}"
+        return None
 
     async def _rename(self, channel: discord.StageChannel, name: str) -> None:
         if channel.name == name:
@@ -162,24 +171,53 @@ class StatsCog(commands.Cog):
 
     # ----------------------------------------------------------------- loop
 
-    @tasks.loop(minutes=UPDATE_MINUTES)
-    async def refresh(self) -> None:
+    async def run_update(self) -> str:
+        """Create/find the channels and apply any pending rename.
+        Returns a one-line status (also kept in self.status)."""
         guild = self.bot.get_guild(self.guild_id)
         if guild is None:
-            log.warning("Stats guild %s not found (is the bot in it?)", self.guild_id)
-            return
+            self.status = f"the bot is not in server {self.guild_id} (or it has not loaded yet)"
+            log.warning("Stats: %s", self.status)
+            return self.status
 
-        # Always re-check on each tick so a deleted channel is recreated,
-        # but only rename when something changed.
-        if not await self._ensure(guild):
-            return
-        if not self._dirty:
-            return
-        self._dirty = False
+        # Always re-check so a deleted channel is recreated; only rename
+        # when something changed.
+        problem = await self._ensure(guild)
+        if problem:
+            self.status = problem
+            log.warning("Stats: %s", problem)
+            return problem
 
-        assert self._users_channel is not None and self._servers_channel is not None
-        await self._rename(self._users_channel, users_name(self.unique_users()))
-        await self._rename(self._servers_channel, servers_name(self.server_count()))
+        if self._dirty:
+            self._dirty = False
+            assert self._users_channel is not None and self._servers_channel is not None
+            await self._rename(self._users_channel, users_name(self.unique_users()))
+            await self._rename(self._servers_channel, servers_name(self.server_count()))
+
+        self.status = "ok"
+        return "ok"
+
+    @tasks.loop(minutes=UPDATE_MINUTES)
+    async def refresh(self) -> None:
+        try:
+            await self.run_update()
+        except Exception:  # a crash here would otherwise stop the loop for good
+            self.status = "unexpected error (see logs)"
+            log.exception("Stats update failed")
+
+    @commands.command(name="stats")
+    @commands.is_owner()
+    async def stats_command(self, ctx: commands.Context) -> None:
+        """!stats: update the stats channels now and report what happened (owner only)."""
+        self._dirty = True
+        result = await self.run_update()
+        users = self._users_channel.mention if self._users_channel else "none"
+        servers = self._servers_channel.mention if self._servers_channel else "none"
+        await ctx.send(
+            f"Stats update: **{result}**\n"
+            f"Users channel: {users} | Servers channel: {servers}\n"
+            f"Now: {users_name(self.unique_users())}, {servers_name(self.server_count())}"
+        )
 
     @refresh.before_loop
     async def _before_refresh(self) -> None:
