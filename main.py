@@ -4,6 +4,7 @@ Env vars:
   DISCORD_TOKEN  required, the bot token
   BOT_OWNER_ID   optional, the user allowed to run !sync (defaults to the
                  Discord application's owner)
+  DEPLOY_LOG_CHANNEL_ID  optional, channel for redeployment logs
   PORT           optional, keep-alive web server port (default 8080)
 
 Note: the "!" prefix needs the Message Content intent enabled in the
@@ -20,6 +21,7 @@ import discord
 from aiohttp import web
 from discord.ext import commands
 
+from deploy_log import post_deploy_log
 from keep_alive import start_keep_alive
 
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +50,7 @@ class QuoteBot(commands.Bot):
         )
         self.add_command(sync)
         self._keep_alive: web.AppRunner | None = None
+        self._deploy_logged = False
 
     async def setup_hook(self) -> None:
         await self.load_extension("cogs.message")
@@ -62,6 +65,9 @@ class QuoteBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
+        if not self._deploy_logged:  # on_ready can fire again on reconnects
+            self._deploy_logged = True
+            await post_deploy_log(self)
 
     async def on_command_error(self, ctx: commands.Context, error: Exception) -> None:
         # Stay silent for non-owners and unknown commands.

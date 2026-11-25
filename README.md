@@ -35,3 +35,10 @@ Discord's CDN (custom emoji).
 `!sync` (owner only) re-syncs the slash commands. Set `BOT_OWNER_ID`, or the
 application owner is used. Needs the **Message Content** intent enabled in the
 Developer Portal.
+
+## Redeployment log
+
+On each new Render deploy the bot posts an embed (version, branch, who ran it,
+time, updated content) to channel `1575116831281254425` (override with
+`DEPLOY_LOG_CHANNEL_ID`). The bot needs View Channel, Send Messages, Embed Links
+and Read Message History there. Each commit is logged once.
