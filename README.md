@@ -29,3 +29,9 @@ Discord's CDN (custom emoji).
 
 `pip install -r requirements.txt`, set `DISCORD_TOKEN`, then `python main.py`.
 `keep_alive.py` serves a tiny page on `PORT` for uptime pingers.
+
+## Owner command
+
+`!sync` (owner only) re-syncs the slash commands. Set `BOT_OWNER_ID`, or the
+application owner is used. Needs the **Message Content** intent enabled in the
+Developer Portal.

@@ -2,7 +2,12 @@
 
 Env vars:
   DISCORD_TOKEN  required, the bot token
+  BOT_OWNER_ID   optional, the user allowed to run !sync (defaults to the
+                 Discord application's owner)
   PORT           optional, keep-alive web server port (default 8080)
+
+Note: the "!" prefix needs the Message Content intent enabled in the
+Discord Developer Portal (Bot > Privileged Gateway Intents).
 """
 
 from __future__ import annotations
@@ -21,12 +26,27 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
 
 
+@commands.command(name="sync")
+@commands.is_owner()
+async def sync(ctx: commands.Context) -> None:
+    """!sync: re-sync slash commands with Discord (owner only)."""
+    synced = await ctx.bot.tree.sync()
+    log.info("!sync by %s synced %d command(s)", ctx.author, len(synced))
+    await ctx.send(f"Synced {len(synced)} slash command(s).")
+
+
 class QuoteBot(commands.Bot):
     def __init__(self) -> None:
+        intents = discord.Intents.default()
+        intents.message_content = True  # needed for the "!" prefix
+
+        owner_id = os.environ.get("BOT_OWNER_ID", "").strip()
         super().__init__(
-            command_prefix=commands.when_mentioned,
-            intents=discord.Intents.default(),
+            command_prefix=commands.when_mentioned_or("!"),
+            intents=intents,
+            owner_id=int(owner_id) if owner_id.isdigit() else None,
         )
+        self.add_command(sync)
         self._keep_alive: web.AppRunner | None = None
 
     async def setup_hook(self) -> None:
@@ -42,6 +62,12 @@ class QuoteBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
+
+    async def on_command_error(self, ctx: commands.Context, error: Exception) -> None:
+        # Stay silent for non-owners and unknown commands.
+        if isinstance(error, (commands.NotOwner, commands.CommandNotFound)):
+            return
+        log.error("Command error in %s", ctx.command, exc_info=error)
 
 
 async def main() -> None:
