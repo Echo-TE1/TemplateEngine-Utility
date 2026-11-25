@@ -189,5 +189,6 @@ All slash commands are owner-only (`BOT_OWNER_ID`); anyone else gets a private "
 
 - `/quote message:<link or ID>` renders a card of a **real** message from this server (name, picture, time, text up to 500 characters) and links to the original. It needs the Message Content intent to read text.
 - `/mock text:<..> [name] [color]` renders a **made-up** message. It uses an invented name or yourself (leave `name` empty); a name that matches a real member is refused. The image always carries the full-strength watermark from `src/lib/watermark.js` (a tiled `MOCK` label and solid top and bottom banners), so it cannot be passed off as a real message.
+- `/mock user:<member>` works only for members who turned it on themselves with `/settings mock allow:on` (everyone is off by default, and they can turn it off any time). Each use is logged as `[Mock]`. `/settings` is the one command anyone can run.
 - There are deliberately no commands that fake other people's messages, reports, friend requests or similar screens.
 - Images are drawn with `@napi-rs/canvas` and the Inter font in `fonts/` (SIL Open Font License), so they look the same on any host. Both commands are owner-only like the rest (see `PUBLIC_COMMANDS` in `index.js`).

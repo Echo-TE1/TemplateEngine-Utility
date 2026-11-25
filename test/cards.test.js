@@ -47,3 +47,22 @@ test('cards render to PNG, with and without the watermark', { skip: !hasCanvas &
     assert.equal(png.subarray(1, 4).toString(), 'PNG');
   }
 });
+
+test('MockConsent: off by default, opt in and out, survives a restart, failed save changes nothing', async () => {
+  const { MockConsent } = require('../src/services/mockConsent');
+  const docs = {};
+  const store = { getDoc: async (k) => docs[k], setDoc: async (k, v) => { docs[k] = v; } };
+  const a = new MockConsent({ store });
+  await a.load();
+  assert.equal(a.isAllowed('1'), false);
+  await a.set('1', true);
+  const b = new MockConsent({ store });
+  await b.load();
+  assert.equal(b.isAllowed('1'), true);
+  await b.set('1', false);
+  assert.equal(b.isAllowed('1'), false);
+  const broken = new MockConsent({ store: { getDoc: async () => ({}), setDoc: async () => { throw new Error('disk full'); } } });
+  await broken.load();
+  await assert.rejects(() => broken.set('2', true), /disk full/);
+  assert.equal(broken.isAllowed('2'), false);
+});

@@ -15,7 +15,7 @@ const OWNER = [
   ['/profile tracker panel', 'Post the Roblox lookup panel.'],
   ['/channel create', 'Create a channel, optionally temporary.'],
   ['/quote', 'Quote card from a real message (link or ID), with a link to the original.'],
-  ['/mock', 'Labelled mock-up message: invented name, or yourself. Always watermarked.'],
+  ['/mock', 'Labelled mock-up message: invented name, yourself, or a member who opted in. Always watermarked.'],
   ['/botstatus', 'Bot health and what each part is doing.'],
 ];
 

@@ -12,21 +12,30 @@ module.exports = {
     .setDMPermission(false)
     .addStringOption((o) => o.setName('text').setDescription('What the message says').setRequired(true).setMaxLength(400))
     .addStringOption((o) => o.setName('name').setDescription('Invented character name (leave empty to use yourself)').setMaxLength(32))
+    .addUserOption((o) => o.setName('user').setDescription('Someone who turned mock-ups on in /settings (they can turn it off any time)'))
     .addStringOption((o) =>
       o.setName('color').setDescription('Name colour').addChoices(...Object.keys(PALETTE).map((k) => ({ name: k, value: k })))),
 
-  async execute(interaction) {
+  async execute(interaction, context) {
     const build = async () => {
       try {
         const text = interaction.options.getString('text', true);
         const given = interaction.options.getString('name');
         const color = interaction.options.getString('color') || 'blue';
+        const target = interaction.options.getUser('user');
+        if (target && given) return { embeds: [errorEmbed('Pick One', 'Use either a user or an invented name, not both.')] };
+        if (target && target.bot) return { embeds: [errorEmbed('Not Allowed', 'Mock-ups of bots are not supported.')] };
+        if (target && target.id !== interaction.user.id && !context.mockConsent.isAllowed(target.id)) {
+          return { embeds: [errorEmbed('Not Allowed', `${target.username} has not turned mock-ups on. They can allow it with \`/settings mock allow:on\`.`)] };
+        }
+        const subject = target || (given ? null : interaction.user);
         let name = given;
         let avatar = null;
-        if (!given) {
-          // Yourself: your own server name and picture.
-          name = (interaction.member && interaction.member.displayName) || interaction.user.username;
-          avatar = await fetch(interaction.user.displayAvatarURL({ extension: 'png', size: 128 }), { signal: AbortSignal.timeout(4000) })
+        if (subject) {
+          console.log(`[Mock] ${interaction.user.id} made a labelled mock-up of ${subject.id}`);
+          const member = await interaction.guild.members.fetch(subject.id).catch(() => null);
+          name = (member && member.displayName) || subject.username;
+          avatar = await fetch(subject.displayAvatarURL({ extension: 'png', size: 128 }), { signal: AbortSignal.timeout(4000) })
             .then((r) => (r.ok ? r.arrayBuffer() : null))
             .then((b) => (b ? Buffer.from(b) : null))
             .catch(() => null);

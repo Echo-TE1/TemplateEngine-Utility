@@ -21,6 +21,7 @@ const { RobloxProfiles } = require('./src/services/robloxProfile');
 const { BadgeEmojis } = require('./src/services/badgeEmojis');
 const { ProfilePanel } = require('./src/services/profilePanel');
 const { EconomyTracker } = require('./src/services/economy');
+const { MockConsent } = require('./src/services/mockConsent');
 const { MessageMirror } = require('./src/services/mirror');
 const { startWatchdog } = require('./src/lib/watchdog');
 const { botNoticeEmbed } = require('./src/embeds');
@@ -29,7 +30,7 @@ const COMMAND_TIMEOUT_MS = 25_000;
 
 // Slash commands are for the owner only. Everyone else can use just the two public features, which are
 // not commands: the reaction role message (reactions) and the Roblox profile lookup (button + modal).
-const PUBLIC_COMMANDS = new Set();
+const PUBLIC_COMMANDS = new Set(['settings']); // a person's own opt-in/out switch
 const canUse = (interaction) => interaction.user.id === config.ownerId || PUBLIC_COMMANDS.has(interaction.commandName);
 const startedAt = Date.now();
 
@@ -98,6 +99,8 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   const tracker = new Tracker({ client, store, config, logChannels, serviceRoles, notifier });
   const health = config.healthEnabled ? new HealthMonitor({ store, config, notifier }) : null;
   const news = config.newsEnabled ? new NewsWatcher({ store, config, notifier }) : null;
+  const mockConsent = new MockConsent({ store });
+  await mockConsent.load();
   const economy = config.economyEnabled ? new EconomyTracker({ store, config, notifier }) : null;
   const mirror = messageContent ? new MessageMirror({ store, logChannels, config }) : null;
   if (mirror) {
@@ -106,7 +109,7 @@ async function boot({ messageContent, mirrorIntentRefused = false }) {
   }
 
   // Everything a command may need.
-  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, economy, mirror, memberCount, reactionRoles, tempChannels, profiles, badgeEmojis, profilePanel, mirrorIntentRefused, startedAt };
+  const context = { client, store, config, logChannels, serviceRoles, notifier, tracker, health, news, economy, mockConsent, mirror, memberCount, reactionRoles, tempChannels, profiles, badgeEmojis, profilePanel, mirrorIntentRefused, startedAt };
 
   // A startup step that can never crash or hang the bot: it is timed, logged and limited.
   const step = async (name, fn, ms = 20_000) => {
