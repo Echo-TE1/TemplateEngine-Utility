@@ -41,7 +41,8 @@ All commands are owner-only (`BOT_OWNER_ID`) except those in `PUBLIC_COMMANDS` i
 index.js                      start-up, command handling, owner gate
 keepAlive.js                  tiny web server for Render pings
 src/config.js                 environment variables
-src/commands/                 quote, mock, settings, help (one file each)
+src/commands/message.js       /quote and /mock (the message module)
+src/commands/                 settings.js, help.js
 src/services/mockConsent.js   who allowed mock-ups of themselves
 src/services/store.js         MongoDB or local JSON storage
 src/lib/watermark.js          the watermark system

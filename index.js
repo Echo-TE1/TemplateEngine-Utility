@@ -18,15 +18,17 @@ const startedAt = Date.now();
 const PUBLIC_COMMANDS = new Set(['settings', 'help']);
 const canUse = (interaction) => interaction.user.id === config.ownerId || PUBLIC_COMMANDS.has(interaction.commandName);
 
-// Every file in src/commands exports { data, execute }. Add more commands by dropping files there.
+// Every file in src/commands exports { data, execute }, or { commands: [ ... ] } to group several (see message.js).
 function loadCommands() {
   const commands = new Collection();
   const dir = path.join(__dirname, 'src', 'commands');
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
     try {
-      const command = require(path.join(dir, file));
-      commands.set(command.data.name, command);
-      console.log(`[Command Loaded] /${command.data.name}`);
+      const loaded = require(path.join(dir, file));
+      for (const command of loaded.commands || [loaded]) {
+        commands.set(command.data.name, command);
+        console.log(`[Command Loaded] /${command.data.name} (${file})`);
+      }
     } catch (error) {
       console.error(`[Command Error] Failed to load ${file}: ${error.message}`);
     }
