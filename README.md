@@ -10,20 +10,20 @@ Image rendering only: no webhooks, no impersonation.
 
 | Option | Meaning |
 |---|---|
-| `user` | The user shown on the card |
-| `text` | Message text (1-1000 chars) |
-| `theme` | `dark` (default) or `light` |
-| `display_font` | Inter (default), DejaVu Sans, DejaVu Serif, DejaVu Mono (bundled in `fonts/`) |
-| `image` | Image shown under the message |
-| `timestamp` | Show the timestamp (default yes) |
-| `mention_highlight` | Highlight `@mentions` (default yes) |
-| `reactions` | e.g. `👍 3 🔥 2` (custom emoji like `<:name:id>` work) |
-| `togif` | Send a GIF instead of a PNG (single frame) |
-| `use_username` | Show the username instead of the display name |
-| `hide_clantags` | Hide the user's clan tag |
+| `text` | Message content (required, 1-1000 chars) |
+| `user` | Who the message is shown as (defaults to you) |
+| `theme` | `dark` (default), `ash`, `onyx` or `light` |
+| `display_font` | `default`, `sakura`, `jellybean`, `modern`, `medieval`, `8bit`, `vampyre` |
+| `image` | Image shown under the text (rounded corners, scaled to fit) |
+| `timestamp` | Custom text; default is `Today at <current time>` (set `CARD_TIMEZONE`, e.g. `Asia/Tokyo`) |
+| `mention_highlight` | Amber row tint and left bar, like a mention |
+| `reactions` | e.g. `💀 4, 🔥 2` (Unicode emoji; count defaults to 1) |
+| `togif` | Output a GIF (animated if the attached image is animated) |
+| `use_username` | Show `user.name` instead of the display name |
+| `hide_clantags` | Hide the clan tag badge |
 
-Emoji images for `reactions` are downloaded from the Twemoji CDN (Unicode) or
-Discord's CDN (custom emoji).
+The card is drawn locally at 2x and downsampled with LANCZOS. Fonts and the
+emoji font are bundled in `fonts/`; no network access is needed to render.
 
 ## Run
 
