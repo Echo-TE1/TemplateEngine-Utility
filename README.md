@@ -42,3 +42,13 @@ On each new Render deploy the bot posts an embed (version, branch, who ran it,
 time, updated content) to channel `1575116831281254425` (override with
 `DEPLOY_LOG_CHANNEL_ID`). The bot needs View Channel, Send Messages, Embed Links
 and Read Message History there. Each commit is logged once.
+
+## Live stats stage channels
+
+`cogs/stats.py` keeps two stage channels in guild `1573644874077708438`
+(override with `STATS_GUILD_ID`) named `<n> indiv. users` and `<n> servers`.
+They are found again by name after a redeploy, recreated if deleted, and
+renamed at most every 6 minutes (Discord allows 2 renames per 10 minutes).
+The bot needs Manage Channels there, and the server must be a Community server.
+Enable the **Server Members** intent for a de-duplicated user count.
+Optional env: `STATS_CATEGORY_ID`, `STATS_USERS_CHANNEL_ID`, `STATS_SERVERS_CHANNEL_ID`.
