@@ -15,7 +15,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional, Union
@@ -284,15 +284,65 @@ def _decode_attachment(data: bytes, animated: bool) -> tuple[list[Image.Image], 
     return frames, durations
 
 
-def default_timestamp(tz_name: Optional[str] = None) -> str:
-    """'Today at 8:44 PM' in CARD_TIMEZONE (default UTC)."""
-    tz_name = tz_name or os.environ.get("CARD_TIMEZONE", "UTC")
-    try:
-        from zoneinfo import ZoneInfo
+TZ_ALIASES: dict[str, int] = {  # fixed offsets in minutes
+    "UTC": 0, "GMT": 0, "Z": 0, "WET": 0, "BST": 60, "CET": 60, "CEST": 120,
+    "EET": 120, "EEST": 180, "MSK": 180, "GST": 240, "PKT": 300, "IST": 330,
+    "ICT": 420, "WIB": 420, "SGT": 480, "HKT": 480, "AWST": 480,
+    "JST": 540, "KST": 540, "ACST": 570, "AEST": 600, "AEDT": 660, "NZST": 720,
+    "NZDT": 780, "EST": -300, "EDT": -240, "CST": -360, "CDT": -300,
+    "MST": -420, "MDT": -360, "PST": -480, "PDT": -420, "AKST": -540,
+    "AKDT": -480, "HST": -600, "AST": -240, "NST": -210,
+}
+OFFSET_RE = re.compile(r"^(?:UTC|GMT)?\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?$", re.IGNORECASE)
 
-        now = datetime.now(ZoneInfo(tz_name))
+
+@lru_cache(maxsize=1)
+def _zone_names() -> dict[str, str]:
+    """lowercase IANA name -> proper-case name."""
+    try:
+        from zoneinfo import available_timezones
+
+        return {name.lower(): name for name in available_timezones()}
     except Exception:
-        now = datetime.now(timezone.utc)
+        return {}
+
+
+def parse_timezone(value: Optional[str]) -> Optional[tzinfo]:
+    """Turn user input into a tzinfo. Accepts IANA names ('Asia/Tokyo',
+    'america/new_york'), abbreviations ('JST', 'PST'), and offsets
+    ('UTC+9', '+05:30', 'GMT-3'). Returns None if it can't be understood."""
+    text = (value or "").strip()
+    if not text:
+        return None
+
+    upper = text.upper()
+    if upper in TZ_ALIASES:
+        return timezone(timedelta(minutes=TZ_ALIASES[upper]))
+
+    match = OFFSET_RE.match(text)
+    if match:
+        sign = -1 if match.group(1) == "-" else 1
+        hours, minutes = int(match.group(2)), int(match.group(3) or 0)
+        if hours <= 14 and minutes < 60:
+            return timezone(sign * timedelta(hours=hours, minutes=minutes))
+        return None
+
+    name = _zone_names().get(text.lower().replace(" ", "_"))
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            return ZoneInfo(name)
+        except Exception:
+            return None
+    return None
+
+
+def default_timestamp(tz: Optional[tzinfo] = None) -> str:
+    """'Today at 8:44 PM' in the given timezone (else CARD_TIMEZONE, else UTC)."""
+    if tz is None:
+        tz = parse_timezone(os.environ.get("CARD_TIMEZONE", "UTC")) or timezone.utc
+    now = datetime.now(tz)
     return f"Today at {now.strftime('%I:%M %p').lstrip('0')}"
 
 
@@ -605,7 +655,8 @@ class MessageCog(commands.Cog):
         theme="Card theme (default: dark)",
         display_font="Display name font (default: default)",
         image="An image to show under the message",
-        timestamp="Custom timestamp text (default: Today at <current time>)",
+        timestamp="Custom timestamp text (overrides the clock)",
+        timezone="Any timezone: Asia/Tokyo, JST, UTC+9, -05:00 ... (default: UTC)",
         mention_highlight="Highlight the row like a mention (amber tint and bar)",
         reactions="Reactions, e.g. '💀 4, 🔥 2'",
         togif="Output a GIF instead of a PNG",
@@ -621,12 +672,25 @@ class MessageCog(commands.Cog):
         display_font: FontChoice = "default",
         image: Optional[discord.Attachment] = None,
         timestamp: Optional[str] = None,
+        timezone: Optional[str] = None,
         mention_highlight: bool = False,
         reactions: Optional[str] = None,
         togif: bool = False,
         use_username: bool = False,
         hide_clantags: bool = False,
     ) -> None:
+        tz = None
+        if timezone and not (timestamp or "").strip():
+            tz = parse_timezone(timezone)
+            if tz is None:
+                await interaction.response.send_message(
+                    f"I don't know the timezone `{timezone[:40]}`. Try a name like "
+                    "`Asia/Tokyo` or `America/New_York`, an abbreviation like `JST`, "
+                    "or an offset like `UTC+9` or `-05:30`.",
+                    ephemeral=True,
+                )
+                return
+
         await interaction.response.defer(thinking=True)
         target = user or interaction.user
 
@@ -674,7 +738,7 @@ class MessageCog(commands.Cog):
                 name_color=name_color,
                 clan_tag=clan_tag,
                 is_app=bool(getattr(target, "bot", False)),
-                timestamp=(timestamp or "").strip()[:60] or default_timestamp(),
+                timestamp=(timestamp or "").strip()[:60] or default_timestamp(tz),
                 text=text,
                 theme_name=theme,
                 font_key=display_font,
@@ -690,6 +754,19 @@ class MessageCog(commands.Cog):
             raise
 
         await interaction.followup.send(file=discord.File(buffer, filename=f"message.{ext}"))
+
+    @message.autocomplete("timezone")
+    async def timezone_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        needle = current.strip().lower().replace(" ", "_")
+        names = sorted(_zone_names().values())
+        if needle:
+            names = [n for n in names if needle in n.lower()]
+        else:
+            names = [n for n in names if n.startswith(("Asia/Tokyo", "America/New_York", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Australia/Sydney", "UTC"))]
+        return [app_commands.Choice(name=n, value=n) for n in names[:25]]
+
 
 
 async def setup(bot: commands.Bot) -> None:

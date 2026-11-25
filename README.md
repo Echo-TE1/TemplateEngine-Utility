@@ -15,7 +15,8 @@ Image rendering only: no webhooks, no impersonation.
 | `theme` | `dark` (default), `ash`, `onyx` or `light` |
 | `display_font` | `default`, `sakura`, `jellybean`, `modern`, `medieval`, `8bit`, `vampyre` |
 | `image` | Image shown under the text (rounded corners, scaled to fit) |
-| `timestamp` | Custom text; default is `Today at <current time>` (set `CARD_TIMEZONE`, e.g. `Asia/Tokyo`) |
+| `timestamp` | Custom timestamp text (overrides the clock) |
+| `timezone` | Any timezone for the "Today at ..." time: `Asia/Tokyo`, `JST`, `UTC+9`, `-05:30` (default `CARD_TIMEZONE`, else UTC) |
 | `mention_highlight` | Amber row tint and left bar, like a mention |
 | `reactions` | e.g. `💀 4, 🔥 2` (Unicode emoji; count defaults to 1) |
 | `togif` | Output a GIF (animated if the attached image is animated) |
