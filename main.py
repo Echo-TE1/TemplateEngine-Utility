@@ -4,7 +4,6 @@ Env vars:
   DISCORD_TOKEN  required, the bot token
   BOT_OWNER_ID   optional, the user allowed to run !sync (defaults to the
                  Discord application's owner)
-  DEPLOY_LOG_CHANNEL_ID  optional, channel for redeployment logs
   PORT           optional, keep-alive web server port (default 8080)
 
 Note: the "!" prefix needs the Message Content intent, and the unique user
@@ -23,6 +22,7 @@ import discord
 from aiohttp import web
 from discord.ext import commands
 
+from config import GUILD_ID
 from deploy_log import post_deploy_log
 from keep_alive import start_keep_alive
 
@@ -34,9 +34,9 @@ log = logging.getLogger("bot")
 @commands.is_owner()
 async def sync(ctx: commands.Context) -> None:
     """!sync: re-sync slash commands with Discord (owner only)."""
-    synced = await ctx.bot.tree.sync()
-    log.info("!sync by %s synced %d command(s)", ctx.author, len(synced))
-    await ctx.send(f"Synced {len(synced)} slash command(s).")
+    count = await ctx.bot.sync_commands()
+    log.info("!sync by %s synced %d command(s)", ctx.author, count)
+    await ctx.send(f"Synced {count} slash command(s) globally (and to this server instantly).")
 
 
 class QuoteBot(commands.Bot):
@@ -59,9 +59,21 @@ class QuoteBot(commands.Bot):
     async def setup_hook(self) -> None:
         await self.load_extension("cogs.message")
         await self.load_extension("cogs.stats")
-        synced = await self.tree.sync()
-        log.info("Synced %d slash command(s)", len(synced))
+        await self.sync_commands()
         self._keep_alive = await start_keep_alive()
+
+    async def sync_commands(self) -> int:
+        """Global sync, plus an instant copy to the home guild so new or
+        changed commands show up there immediately (global rollout can lag)."""
+        synced = await self.tree.sync()
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        try:
+            await self.tree.sync(guild=guild)
+        except discord.HTTPException as exc:
+            log.warning("Guild sync failed for %s: %s", GUILD_ID, exc)
+        log.info("Synced %d global slash command(s)", len(synced))
+        return len(synced)
 
     async def close(self) -> None:
         if self._keep_alive is not None:
