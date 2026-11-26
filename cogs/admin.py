@@ -47,9 +47,9 @@ class AdminCog(commands.Cog):
             inline=False,
         )
         embed.add_field(
-            name="/giveaway start | edit | delete | list",
-            value="Giveaways with a Join button inside the embed (needs Manage Server). `edit` and `delete` "
-            "take the giveaway's message ID or link.",
+            name="/giveaway create | edit | end | reroll | delete | list | status",
+            value="Giveaways with a gift button inside the card (Administrator by default). The others take the "
+            "giveaway's message ID or link.",
             inline=False,
         )
         embed.add_field(
