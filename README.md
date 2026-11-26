@@ -20,6 +20,30 @@ Image rendering only: no webhooks, no impersonation.
 | `togif` | Output a GIF (animated if the attached image is animated) |
 | `use_username` | Show the username instead of the display name (default: display name) |
 | `hide_clantags` | Hide the clan tag |
+| `reply_to` / `reply_text` | Adds a "replying to" line above the message |
+| `edited` | Adds the `(edited)` tag |
+| `embed_title` / `embed_description` / `embed_color` | Adds an embed (colour as hex, e.g. `#5865F2`) |
+| `sticker` | An image shown as a sticker |
+| `label` | Small "Generated image - not a real Discord message" footer (off by default) |
+| `role_icon` | Show the top role's icon next to the name (default on) |
+
+The user's top-role icon (image or emoji) is drawn next to the name automatically.
+
+### `/generate discord conversation`
+
+`script` takes one message per line, `Name: text` or `<@id>: text` (mentions use the real
+profile). The same speaker twice in a row is grouped like the client does. Max 12 lines, 6 speakers.
+Options: `theme`, `timestamp`, `use_username`, `hide_clantags`, `label`.
+
+### `/defaults set | show | reset`
+
+Saves your own default `theme`, `timestamp`, `hide_clantags`, `use_username` and `label`. They are
+stored as messages in a private `bot-data` channel the bot creates in the home server (so they
+survive redeploys; needs Manage Channels). Without it they are kept in memory only.
+
+### `/help`
+
+Shows these commands inside Discord.
 
 The card is drawn locally at 2x and downsampled with LANCZOS (`cardrender.py`).
 Fonts are bundled in `fonts/`.
@@ -34,9 +58,9 @@ emoji is drawn large, like in the client.
 `pip install -r requirements.txt`, set `DISCORD_TOKEN`, then `python main.py`.
 `keep_alive.py` serves a tiny page on `PORT` for uptime pingers.
 
-## Owner command
+## Owner commands
 
-`!sync` (owner only) re-syncs the slash commands. Set `BOT_OWNER_ID`, or the
+`!reload [message|stats|admin]` reloads cogs without a redeploy. `!sync` (owner only) re-syncs the slash commands. Set `BOT_OWNER_ID`, or the
 application owner is used. Needs the **Message Content** intent enabled in the
 Developer Portal.
 
@@ -68,3 +92,9 @@ your account (Developer Portal > Installation > enable *User Install*).
 `!stats` (owner only) updates the stats channels right now and replies with what
 happened, including why they could not be created (not a Community server,
 missing Manage Channels, bot not in the server).
+
+## Errors, tests and CI
+
+Command and render errors are posted (rate-limited) as embeds to the log channel in `config.py`.
+`CARD_LABEL_DEFAULT=1` turns the "generated image" footer on for everyone by default.
+`python -m pytest` runs the tests; `.github/workflows/ci.yml` runs them on every push.

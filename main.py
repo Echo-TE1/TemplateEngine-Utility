@@ -4,6 +4,7 @@ Env vars:
   DISCORD_TOKEN  required, the bot token
   BOT_OWNER_ID   optional, the user allowed to run !sync (defaults to the
                  Discord application's owner)
+  CARD_LABEL_DEFAULT  optional, 1 = add a "generated image" footer by default (off by default)
   PORT           optional, keep-alive web server port (default 8080)
 
 Note: the "!" prefix needs the Message Content intent, and the unique user
@@ -24,7 +25,9 @@ from discord.ext import commands
 
 from config import GUILD_ID
 from deploy_log import post_deploy_log
+from error_log import report_error
 from keep_alive import start_keep_alive
+from settings_store import SettingsStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
@@ -53,12 +56,15 @@ class QuoteBot(commands.Bot):
             owner_id=int(owner_id) if owner_id.isdigit() else None,
         )
         self.add_command(sync)
+        self.settings = SettingsStore(self)
         self._keep_alive: web.AppRunner | None = None
         self._deploy_logged = False
 
     async def setup_hook(self) -> None:
         await self.load_extension("cogs.message")
         await self.load_extension("cogs.stats")
+        await self.load_extension("cogs.admin")
+        self.tree.on_error = self.on_app_command_error
         await self.sync_commands()
         self._keep_alive = await start_keep_alive()
 
@@ -86,12 +92,31 @@ class QuoteBot(commands.Bot):
         if not self._deploy_logged:  # on_ready can fire again on reconnects
             self._deploy_logged = True
             await post_deploy_log(self)
+            try:
+                await self.settings.load()
+            except Exception as exc:
+                await report_error(self, "loading saved defaults", exc)
 
     async def on_command_error(self, ctx: commands.Context, error: Exception) -> None:
         # Stay silent for non-owners and unknown commands.
         if isinstance(error, (commands.NotOwner, commands.CommandNotFound)):
             return
-        log.error("Command error in %s", ctx.command, exc_info=error)
+        await report_error(self, f"!{ctx.command}", error, user=ctx.author, guild=ctx.guild)
+
+    async def on_app_command_error(
+        self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError
+    ) -> None:
+        name = interaction.command.qualified_name if interaction.command else "unknown"
+        original = getattr(error, "original", error)
+        await report_error(self, f"/{name}", original, user=interaction.user, guild=interaction.guild)
+        message = "Something went wrong. The error was logged."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
 
 async def main() -> None:

@@ -1,0 +1,55 @@
+"""Timestamp helpers (no Discord imports, so they are easy to test)."""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+CLOCK_12 = {"12", "12h", "12hr", "12-hour", "12 hour", "normal", "regular", "am/pm", "ampm"}
+CLOCK_24 = {"24", "24h", "24hr", "24-hour", "24 hour", "military", "24-hour clock (military)"}
+
+
+def _now() -> datetime:
+    """Current time in CARD_TIMEZONE (an IANA name, default UTC)."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(os.environ.get("CARD_TIMEZONE", "UTC")))
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def _format(moment: datetime, military: bool) -> str:
+    if military:
+        return f"Today at {moment.strftime('%H:%M')}"
+    return f"Today at {moment.strftime('%I:%M %p').lstrip('0')}"
+
+
+def default_timestamp(military: bool = False) -> str:
+    """'Today at 8:44 PM' (or 'Today at 20:44' in 24-hour time)."""
+    return _format(_now(), military)
+
+
+def resolve_timestamp(value: Optional[str]) -> str:
+    """Empty or a 12h keyword -> 12-hour clock; 24h / military -> 24-hour
+    clock; anything else is shown exactly as typed."""
+    text = (value or "").strip()
+    key = text.lower()
+    if not text or key in CLOCK_12:
+        return default_timestamp(False)
+    if key in CLOCK_24:
+        return default_timestamp(True)
+    return text[:60]
+
+
+def conversation_timestamps(count: int, value: Optional[str]) -> list[str]:
+    """One timestamp per message group, a minute apart and ending now. Custom
+    text is repeated for every group."""
+    text = (value or "").strip()
+    key = text.lower()
+    if text and key not in CLOCK_12 | CLOCK_24:
+        return [text[:60]] * count
+    military = key in CLOCK_24
+    now = _now()
+    return [_format(now - timedelta(minutes=count - 1 - i), military) for i in range(count)]
