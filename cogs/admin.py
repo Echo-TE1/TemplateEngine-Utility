@@ -19,8 +19,8 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="help", description="How to use this bot.")
-    @app_commands.allowed_installs(guild=True, user=True)
-    @app_commands.allowed_contexts(guild=True, dm_channel=True, private_channel=True)
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channel=True)
     async def help(self, interaction: discord.Interaction) -> None:
         embed = discord.Embed(
             title="Image generator",
