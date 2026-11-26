@@ -23,7 +23,7 @@ from cardrender import (
     RGB, EmbedSpec, MessageSpec, ReplySpec, custom_emoji_ids, parse_reactions, render_card,
 )
 from error_log import report_error
-from timeutil import CLOCK_12, CLOCK_24, conversation_timestamps, default_timestamp, resolve_timestamp
+from timeutil import valid_timezone, CLOCK_12, CLOCK_24, conversation_timestamps, default_timestamp, resolve_timestamp
 
 log = logging.getLogger(__name__)
 
@@ -391,7 +391,7 @@ class MessageCog(commands.Cog):
             role_icon=icon_bytes,
             role_emoji=icon_emoji,
             is_app=bool(getattr(target, "bot", False)),
-            timestamp=resolve_timestamp(timestamp),
+            timestamp=resolve_timestamp(timestamp, defaults.get("timezone")),
             edited=edited,
             mention_colors=mention_colors,
             attachment_bytes=attachment_bytes,
@@ -503,7 +503,7 @@ class MessageCog(commands.Cog):
             if who.lower() != previous:
                 groups += 1
             previous = who.lower()
-        stamps = conversation_timestamps(groups, timestamp)
+        stamps = conversation_timestamps(groups, timestamp, defaults.get("timezone"))
 
         all_text = "\n".join(t for _, t in rows)
         custom = await self._fetch_custom_emoji(all_text, "")
@@ -537,6 +537,7 @@ class MessageCog(commands.Cog):
     @app_commands.describe(
         theme="Default theme",
         timestamp="Default timestamp: 12h, 24h or your own text",
+        timezone="Your timezone for 12h/24h times, e.g. Asia/Tokyo or America/New_York",
         hide_clantags="Hide clan tags by default",
         use_username="Show usernames instead of display names by default",
         label="Add the 'generated image' footer by default",
@@ -546,16 +547,22 @@ class MessageCog(commands.Cog):
         interaction: discord.Interaction,
         theme: Optional[ThemeName] = None,
         timestamp: Optional[str] = None,
+        timezone: Optional[str] = None,
         hide_clantags: Optional[bool] = None,
         use_username: Optional[bool] = None,
         label: Optional[bool] = None,
     ) -> None:
         await interaction.response.defer(ephemeral=True)
+        if timezone is not None and not valid_timezone(timezone):
+            await interaction.followup.send(
+                "Unknown timezone. Use a name like `Asia/Tokyo`, `Europe/London` or `America/New_York`.",
+                ephemeral=True)
+            return
         store = getattr(self.bot, "settings", None)
         if store is None:
             await interaction.followup.send("Saved defaults are not available right now.", ephemeral=True)
             return
-        values = {"theme": theme, "timestamp": timestamp, "hide_clantags": hide_clantags,
+        values = {"theme": theme, "timezone": timezone, "timestamp": timestamp, "hide_clantags": hide_clantags,
                   "use_username": use_username, "label": label}
         if all(v is None for v in values.values()):
             await interaction.followup.send("Fill in at least one option to save.", ephemeral=True)
@@ -569,6 +576,16 @@ class MessageCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         return timestamp_choices(current)
+
+    @defaults_set.autocomplete("timezone")
+    async def defaults_timezone_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        from zoneinfo import available_timezones
+
+        typed = current.strip().lower().replace(" ", "_")
+        names = sorted(n for n in available_timezones() if typed in n.lower())
+        return [app_commands.Choice(name=n, value=n) for n in names[:25]]
 
     @defaults_group.command(name="show", description="Show your saved defaults.")
     async def defaults_show(self, interaction: discord.Interaction) -> None:

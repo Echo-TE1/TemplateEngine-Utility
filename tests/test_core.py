@@ -66,3 +66,10 @@ def test_render_gif():
     buf, ext = render_card([spec], as_gif=True)
     assert ext == "gif"
     assert Image.open(buf).format == "GIF"
+
+
+def test_timezone_per_user():
+    from timeutil import valid_timezone
+    assert valid_timezone("Asia/Tokyo") and not valid_timezone("Nope/Zone") and not valid_timezone("")
+    assert resolve_timestamp("12h", "Asia/Tokyo").startswith("Today at ")
+    assert resolve_timestamp("12h", "bogus").startswith("Today at ")

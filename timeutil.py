@@ -10,14 +10,24 @@ CLOCK_12 = {"12", "12h", "12hr", "12-hour", "12 hour", "normal", "regular", "am/
 CLOCK_24 = {"24", "24h", "24hr", "24-hour", "24 hour", "military", "24-hour clock (military)"}
 
 
-def _now() -> datetime:
-    """Current time in CARD_TIMEZONE (an IANA name, default UTC)."""
+def valid_timezone(name: Optional[str]) -> bool:
     try:
         from zoneinfo import ZoneInfo
 
-        return datetime.now(ZoneInfo(os.environ.get("CARD_TIMEZONE", "UTC")))
+        ZoneInfo((name or "").strip())
+        return bool((name or "").strip())
     except Exception:
-        return datetime.now(timezone.utc)
+        return False
+
+
+def _now(tz: Optional[str] = None) -> datetime:
+    """Current time in the given IANA zone, else CARD_TIMEZONE, else UTC."""
+    from zoneinfo import ZoneInfo
+
+    for name in (tz, os.environ.get("CARD_TIMEZONE")):
+        if name and valid_timezone(name):
+            return datetime.now(ZoneInfo(name.strip()))
+    return datetime.now(timezone.utc)
 
 
 def _format(moment: datetime, military: bool) -> str:
@@ -26,24 +36,24 @@ def _format(moment: datetime, military: bool) -> str:
     return f"Today at {moment.strftime('%I:%M %p').lstrip('0')}"
 
 
-def default_timestamp(military: bool = False) -> str:
+def default_timestamp(military: bool = False, tz: Optional[str] = None) -> str:
     """'Today at 8:44 PM' (or 'Today at 20:44' in 24-hour time)."""
-    return _format(_now(), military)
+    return _format(_now(tz), military)
 
 
-def resolve_timestamp(value: Optional[str]) -> str:
+def resolve_timestamp(value: Optional[str], tz: Optional[str] = None) -> str:
     """Empty or a 12h keyword -> 12-hour clock; 24h / military -> 24-hour
     clock; anything else is shown exactly as typed."""
     text = (value or "").strip()
     key = text.lower()
     if not text or key in CLOCK_12:
-        return default_timestamp(False)
+        return default_timestamp(False, tz)
     if key in CLOCK_24:
-        return default_timestamp(True)
+        return default_timestamp(True, tz)
     return text[:60]
 
 
-def conversation_timestamps(count: int, value: Optional[str]) -> list[str]:
+def conversation_timestamps(count: int, value: Optional[str], tz: Optional[str] = None) -> list[str]:
     """One timestamp per message group, a minute apart and ending now. Custom
     text is repeated for every group."""
     text = (value or "").strip()
@@ -51,5 +61,5 @@ def conversation_timestamps(count: int, value: Optional[str]) -> list[str]:
     if text and key not in CLOCK_12 | CLOCK_24:
         return [text[:60]] * count
     military = key in CLOCK_24
-    now = _now()
+    now = _now(tz)
     return [_format(now - timedelta(minutes=count - 1 - i), military) for i in range(count)]

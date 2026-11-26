@@ -11,11 +11,12 @@ from typing import Any, Optional
 
 import discord
 
+from timeutil import valid_timezone
 from config import GUILD_ID, SETTINGS_CHANNEL_NAME
 
 log = logging.getLogger("settings_store")
 
-ALLOWED_KEYS = {"theme", "timestamp", "hide_clantags", "use_username", "label"}
+ALLOWED_KEYS = {"theme", "timezone", "timestamp", "hide_clantags", "use_username", "label"}
 THEMES = {"dark", "ash", "onyx", "light"}
 
 
@@ -27,6 +28,10 @@ def clean(values: dict[str, Any]) -> dict[str, Any]:
             continue
         if key == "theme" and value not in THEMES:
             continue
+        if key == "timezone":
+            if not valid_timezone(str(value)):
+                continue
+            value = str(value).strip()
         if key == "timestamp":
             value = str(value)[:60]
         if key in {"hide_clantags", "use_username", "label"}:

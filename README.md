@@ -14,7 +14,7 @@ Image rendering only: no webhooks, no impersonation.
 | `user` | Who the message is shown as (defaults to you) |
 | `theme` | `dark` (default), `ash`, `onyx` or `light` |
 | `image` | Image shown under the text (rounded corners, scaled to fit) |
-| `timestamp` | `12h` (default, `Today at 8:44 PM`), `24h` / `military` (`Today at 20:44`), or any text you type. The clock follows `CARD_TIMEZONE` (e.g. `Asia/Tokyo`), else UTC |
+| `timestamp` | `12h` (default, `Today at 8:44 PM`), `24h` / `military` (`Today at 20:44`), or any text you type. The clock follows your `/defaults set timezone`, else `CARD_TIMEZONE` (optional), else UTC |
 | `mention_highlight` | Amber row tint and left bar, like a mention |
 | `reactions` | e.g. `💀 4, 🔥 2`, `💀4 🔥2`, `💀 x4`, `4 💀`. Unicode and custom emoji; no number = 1 |
 | `togif` | Output a GIF (animated if the attached image is animated) |
@@ -37,7 +37,7 @@ Options: `theme`, `timestamp`, `use_username`, `hide_clantags`, `label`.
 
 ### `/defaults set | show | reset`
 
-Saves your own default `theme`, `timestamp`, `hide_clantags`, `use_username` and `label`. They are
+Saves your own default `timezone` (e.g. `Asia/Tokyo`; used for 12h/24h times), `theme`, `timestamp`, `hide_clantags`, `use_username` and `label`. They are
 stored as messages in a private `bot-data` channel the bot creates in the home server (so they
 survive redeploys; needs Manage Channels). Without it they are kept in memory only.
 
