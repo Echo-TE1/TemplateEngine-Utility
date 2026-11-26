@@ -36,13 +36,13 @@ async def sync(ctx: commands.Context) -> None:
     """!sync: re-sync slash commands with Discord (owner only)."""
     count = await ctx.bot.sync_commands()
     log.info("!sync by %s synced %d command(s)", ctx.author, count)
-    await ctx.send(f"Synced {count} slash command(s) globally (and to this server instantly).")
+    await ctx.send(f"Synced {count} slash command(s) globally.")
 
 
 class QuoteBot(commands.Bot):
-    def __init__(self, members_intent: bool = True) -> None:
+    def __init__(self, members_intent: bool = True, message_content: bool = True) -> None:
         intents = discord.Intents.default()
-        intents.message_content = True  # needed for the "!" prefix
+        intents.message_content = message_content  # needed for the "!" prefix
         # Needed to count *unique* users across servers (StatsCog).
         intents.members = members_intent
 
@@ -63,15 +63,16 @@ class QuoteBot(commands.Bot):
         self._keep_alive = await start_keep_alive()
 
     async def sync_commands(self) -> int:
-        """Global sync, plus an instant copy to the home guild so new or
-        changed commands show up there immediately (global rollout can lag)."""
+        """Sync slash commands globally. Guild-scoped copies of the same
+        commands (from older versions) are removed, otherwise they would show
+        up twice in that server."""
         synced = await self.tree.sync()
         guild = discord.Object(id=GUILD_ID)
-        self.tree.copy_global_to(guild=guild)
         try:
+            self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
         except discord.HTTPException as exc:
-            log.warning("Guild sync failed for %s: %s", GUILD_ID, exc)
+            log.warning("Could not clear guild commands for %s: %s", GUILD_ID, exc)
         log.info("Synced %d global slash command(s)", len(synced))
         return len(synced)
 
@@ -97,16 +98,25 @@ async def main() -> None:
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
         raise SystemExit("DISCORD_TOKEN is not set")
-    try:
-        async with QuoteBot(members_intent=True) as bot:
-            await bot.start(token)
-    except discord.PrivilegedIntentsRequired:
-        log.warning(
-            "Server Members intent is not enabled in the Developer Portal; "
-            "starting without it (user count will not be de-duplicated)."
-        )
-        async with QuoteBot(members_intent=False) as bot:
-            await bot.start(token)
+    # Privileged intents must be enabled in the Developer Portal. If they are
+    # not, fall back instead of crashing: first without Server Members (the
+    # user count is then approximate), then without Message Content too (the
+    # "!" commands stop working, slash commands are unaffected).
+    attempts = (
+        {"members_intent": True, "message_content": True},
+        {"members_intent": False, "message_content": True},
+        {"members_intent": False, "message_content": False},
+    )
+    for index, options in enumerate(attempts):
+        try:
+            async with QuoteBot(**options) as bot:
+                await bot.start(token)
+            return
+        except discord.PrivilegedIntentsRequired:
+            if index == len(attempts) - 1:
+                raise
+            log.warning("A privileged intent is not enabled in the Developer Portal; retrying with %s",
+                        attempts[index + 1])
 
 
 if __name__ == "__main__":
