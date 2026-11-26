@@ -96,9 +96,8 @@ missing Manage Channels, bot not in the server).
 ## Giveaways
 
 `/giveaway start | edit | delete | list` (servers only, Manage Server by default; server admins can change
-who may use it under Server Settings > Integrations). The embed has a green **Join** button; pressing it
-again offers to leave. `start` takes `prize`, `duration` (`30m`, `2h`, `1d12h`), `winners`, `channel`,
-`description` and `required_role`. `edit` and `delete` take the giveaway's message ID or link (autocomplete
+who may use it under Server Settings > Integrations). The message is a purple card with a 🎁 button and an **Entries (n)** button inside it (like Heist). The gift button enters you, pressing it again leaves; **Entries** lists everyone who joined. When it ends the card turns grey and the bot replies with a winner card. `start` takes `prize`, `duration` (`30m`, `2h`, `1d12h`), `winners`, `channel`,
+`host_message`, `required_role` and `ping` (a role or @everyone). `edit` and `delete` take the giveaway's message ID or link (autocomplete
 lists running ones). Entries are stored in a private `giveaway-data` channel the bot creates in the home server
 (needs Manage Channels), so giveaways survive redeploys and end on time after a restart. Winners must still
 be in the server and have the required role; ended giveaways stay in the list of stored data for 7 days.

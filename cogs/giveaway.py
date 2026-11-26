@@ -29,72 +29,127 @@ MAX_SECONDS = 60 * 86400
 KEEP_ENDED_SECONDS = 7 * 86400
 FLUSH_SECONDS = 5
 GREEN = discord.Colour(0x57F287)
-GREY = discord.Colour(0x4F545C)
+RED = discord.Colour(0xED4245)
 
 Record = dict[str, Any]
 
 
-# ------------------------------------------------------------------ embeds
+# ------------------------------------------------------------------ layout
+
+PURPLE = discord.Colour(0x6C5CE7)
+GREY = discord.Colour(0x95A5A6)
+JOIN_ID = "giveaway:join"
+ENTRIES_ID = "giveaway:entries"
+PAGE_SIZE = 20
 
 
-def build_embed(rec: Record) -> discord.Embed:
+async def _noop(interaction: discord.Interaction) -> None:
+    """Clicks are handled by GiveawayCog.on_interaction (works after restarts)."""
+
+
+def host_message_of(rec: Record) -> str:
+    return rec.get("host_message") or rec.get("description") or ""
+
+
+def build_layout(rec: Record) -> discord.ui.LayoutView:
+    """The giveaway message: one container (title, details, host message and
+    the gift / Entries buttons), plus an optional ping line under it."""
+    ended = bool(rec.get("ended"))
     ends = int(rec["ends"])
-    lines: list[str] = []
-    if rec.get("ended"):
-        if rec.get("description"):
-            lines += [rec["description"], ""]
-        winners = ", ".join(f"<@{u}>" for u in rec.get("winner_ids", [])) or "No valid entries"
-        lines += [
-            f"**Ended:** <t:{ends}:R>",
-            f"**Hosted by:** <@{rec['host']}>",
-            f"**Entries:** {len(rec['entries'])}",
-            f"**Winners:** {winners}",
-        ]
-        colour = GREY
+    entries = len(rec["entries"])
+
+    container = discord.ui.Container(accent_colour=GREY if ended else PURPLE)
+    container.add_item(discord.ui.TextDisplay(f"### {rec['prize']}"))
+    if ended:
+        winners = rec.get("winner_ids", [])
+        label = "Winner" if rec["winners"] == 1 else "Winners"
+        shown = ", ".join(f"<@{u}>" for u in winners) or "No valid entries"
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"**Hosted by:** <@{rec['host']}>\n**{label}:** {shown}"))
     else:
-        lines = ([rec["description"]] if rec.get("description") else []) + ["Click the button below to enter!", ""]
-        lines += [
-            f"**Ends:** <t:{ends}:R> (<t:{ends}:f>)",
-            f"**Hosted by:** <@{rec['host']}>",
-            f"**Entries:** {len(rec['entries'])}",
-            f"**Winners:** {rec['winners']}",
-        ]
+        container.add_item(discord.ui.TextDisplay(f"Ends <t:{ends}:R> \u2022 <t:{ends}:F>"))
+        container.add_item(discord.ui.Separator())
+        details = f"**Hosted by:** <@{rec['host']}>\n**Entries:** {entries}\n**Winners:** {rec['winners']}"
         if rec.get("role"):
-            lines.append(f"**Required role:** <@&{rec['role']}>")
-        colour = GREEN
-    embed = discord.Embed(title=f"🎉 {rec['prize']}", description="\n".join(lines), colour=colour)
-    embed.set_footer(text=f"Giveaway ID: {rec['id']}" + (" • Ended" if rec.get("ended") else ""))
+            details += f"\n**Required role:** <@&{rec['role']}>"
+        container.add_item(discord.ui.TextDisplay(details))
+    host_message = host_message_of(rec)
+    if host_message:
+        container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.TextDisplay(f"### Message from Host\n{host_message}"))
+
+    gift = discord.ui.Button(style=discord.ButtonStyle.primary, emoji="\U0001F381",
+                             custom_id="giveaway:ended-join" if ended else JOIN_ID, disabled=ended)
+    count = discord.ui.Button(style=discord.ButtonStyle.secondary, label=f"Entries ({entries})",
+                              custom_id="giveaway:ended-entries" if ended else ENTRIES_ID, disabled=ended)
+    for button in (gift, count):
+        button.callback = _noop  # type: ignore[assignment]
+    row = discord.ui.ActionRow()
+    row.add_item(gift)
+    row.add_item(count)
+    container.add_item(row)
+
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(container)
+    if rec.get("ping"):
+        view.add_item(discord.ui.TextDisplay(rec["ping"]))
+    return view
+
+
+def status_embed(title: str, text: str, colour: discord.Colour) -> discord.Embed:
+    return discord.Embed(title=title, description=text, colour=colour)
+
+
+def winner_embed(rec: Record, members: list[discord.Member], jump_url: str) -> discord.Embed:
+    blocks = []
+    for index, member in enumerate(members):
+        head = "**Winner**" if len(members) == 1 else f"**Winner {index + 1}**"
+        blocks.append(f"{head}\n**Mention:** {member.mention}\n**Username:** {member.name}\n"
+                      f"**User ID:** `{member.id}`")
+    embed = discord.Embed(title=rec["prize"], colour=GREY,
+                          description="\n\n".join(blocks) + f"\n\n[Jump to giveaway]({jump_url})")
+    embed.set_thumbnail(url=members[0].display_avatar.url)
     return embed
 
 
-class JoinView(discord.ui.View):
-    """Persistent: one instance handles the Join button of every giveaway."""
+class EntriesView(discord.ui.View):
+    """Paged list of entrants, shown only to the person who pressed Entries."""
 
-    def __init__(self, cog: "GiveawayCog", ended: bool = False) -> None:
-        super().__init__(timeout=None)
-        self.cog = cog
-        if ended:
-            self.clear_items()
-            self.add_item(discord.ui.Button(label="Giveaway ended", style=discord.ButtonStyle.secondary,
-                                            disabled=True))
+    def __init__(self, rec: Record) -> None:
+        super().__init__(timeout=120)
+        self.rec = rec
+        self.page = 0
+        self._sync()
 
-    @discord.ui.button(label="Join", emoji="🎉", style=discord.ButtonStyle.success, custom_id="giveaway:join")
-    async def join(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.cog.handle_join(interaction)
+    @property
+    def pages(self) -> int:
+        return max(1, -(-len(self.rec["entries"]) // PAGE_SIZE))
 
+    def _sync(self) -> None:
+        self.previous.disabled = self.page <= 0
+        self.next.disabled = self.page >= self.pages - 1
 
-class LeaveView(discord.ui.View):
-    def __init__(self, cog: "GiveawayCog", message_id: int) -> None:
-        super().__init__(timeout=60)
-        self.cog, self.message_id = cog, message_id
+    def embed(self) -> discord.Embed:
+        entries = self.rec["entries"]
+        chunk = entries[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]
+        names = "\n".join(f"<@{u}>" for u in chunk) or "No entries yet."
+        return status_embed(
+            "Giveaway Entries",
+            f"**{self.rec['prize']}**\nTotal entries: `{len(entries)}`\n\n{names}\n\n**Page {self.page + 1}/{self.pages}**",
+            PURPLE,
+        )
 
-    @discord.ui.button(label="Leave giveaway", style=discord.ButtonStyle.danger)
-    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        rec = self.cog.records.get(self.message_id)
-        if rec and not rec.get("ended") and interaction.user.id in rec["entries"]:
-            rec["entries"].remove(interaction.user.id)
-            self.cog.mark_dirty(self.message_id)
-        await interaction.response.edit_message(content="You left the giveaway.", view=None)
+    @discord.ui.button(emoji="\u25C0\uFE0F", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.page = max(0, self.page - 1)
+        self._sync()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(emoji="\u25B6\uFE0F", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.page = min(self.pages - 1, self.page + 1)
+        self._sync()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
 
 
 # --------------------------------------------------------------------- cog
@@ -116,9 +171,6 @@ class GiveawayCog(commands.Cog):
         self._loaded = False
 
     # ---------------------------------------------------------- lifecycle
-
-    async def cog_load(self) -> None:
-        self.bot.add_view(JoinView(self))
 
     async def cog_unload(self) -> None:
         self.tick.cancel()
@@ -186,46 +238,54 @@ class GiveawayCog(commands.Cog):
         if message is None:
             return
         try:
-            await message.edit(embed=build_embed(rec))
+            await message.edit(view=build_layout(rec), allowed_mentions=discord.AllowedMentions.none())
         except discord.NotFound:
             await self._drop(rec)  # the giveaway message was deleted by hand
         except discord.HTTPException as exc:
             log.warning("Could not update giveaway %s: %s", rec["id"], exc)
 
-    async def _eligible(self, guild: Optional[discord.Guild], rec: Record, user_id: int) -> bool:
+    async def _eligible(self, guild: Optional[discord.Guild], rec: Record, user_id: int) -> Optional[discord.Member]:
+        """The member if they can still win (in the server, not a bot, has the role)."""
         if guild is None:
-            return False
+            return None
         member = guild.get_member(user_id)
         if member is None:
             try:
                 member = await guild.fetch_member(user_id)
             except discord.HTTPException:
-                return False
+                return None
         if member.bot:
-            return False
-        return not rec.get("role") or any(r.id == rec["role"] for r in member.roles)
+            return None
+        if rec.get("role") and not any(r.id == rec["role"] for r in member.roles):
+            return None
+        return member
 
     async def _end(self, rec: Record) -> None:
         guild = self.bot.get_guild(rec["guild"])
         pool = list(rec["entries"])
         random.shuffle(pool)
-        winners: list[int] = []
+        members: list[discord.Member] = []
         for user_id in pool:
-            if len(winners) >= rec["winners"]:
+            if len(members) >= rec["winners"]:
                 break
-            if await self._eligible(guild, rec, user_id):
-                winners.append(user_id)
+            member = await self._eligible(guild, rec, user_id)
+            if member is not None:
+                members.append(member)
+        winners = [m.id for m in members]
         rec.update(ended=True, ended_at=int(time.time()), winner_ids=winners, ends=min(rec["ends"], int(time.time())))
         self._dirty.discard(rec["id"])
 
         message = await self._message(rec)
         if message is not None:
             try:
-                await message.edit(embed=build_embed(rec), view=JoinView(self, ended=True))
-                if winners:
-                    mentions = ", ".join(f"<@{u}>" for u in winners)
+                await message.edit(view=build_layout(rec), allowed_mentions=discord.AllowedMentions.none())
+                if members:
+                    mentions = ", ".join(m.mention for m in members)
+                    verb = "is the winner!" if len(members) == 1 else "are the winners!"
+                    jump = f"https://discord.com/channels/{rec['guild']}/{rec['channel']}/{rec['id']}"
                     await message.reply(
-                        f"🎉 Congratulations {mentions}! You won **{rec['prize']}**!",
+                        f"\U0001F381 {mentions} {verb}",
+                        embed=winner_embed(rec, members, jump),
                         allowed_mentions=discord.AllowedMentions(users=True),
                     )
                 else:
@@ -246,27 +306,68 @@ class GiveawayCog(commands.Cog):
 
     # --------------------------------------------------------------- join
 
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        if interaction.type is not discord.InteractionType.component:
+            return
+        custom_id = (interaction.data or {}).get("custom_id")
+        try:
+            if custom_id == JOIN_ID:
+                await self.handle_join(interaction)
+            elif custom_id == ENTRIES_ID:
+                await self.handle_entries(interaction)
+        except Exception as exc:
+            await report_error(self.bot, "giveaway button", exc, user=interaction.user, guild=interaction.guild)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Something went wrong.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+
+    def _running(self, interaction: discord.Interaction) -> Optional[Record]:
+        rec = self.records.get(interaction.message.id if interaction.message else 0)
+        return rec if rec and not rec.get("ended") and rec["ends"] > time.time() else None
+
     async def handle_join(self, interaction: discord.Interaction) -> None:
-        message_id = interaction.message.id if interaction.message else 0
-        rec = self.records.get(message_id)
-        if rec is None or rec.get("ended") or rec["ends"] <= time.time():
-            await interaction.response.send_message("This giveaway has ended.", ephemeral=True)
+        """The gift button: enter, or leave if already in."""
+        rec = self._running(interaction)
+        if rec is None:
+            await interaction.response.send_message(
+                embed=status_embed("Giveaway Ended", "This giveaway has already ended.", RED), ephemeral=True)
             return
         user = interaction.user
-        if rec.get("role") and not (
+        if user.id not in rec["entries"] and rec.get("role") and not (
             isinstance(user, discord.Member) and any(r.id == rec["role"] for r in user.roles)
         ):
             await interaction.response.send_message(
-                f"You need the <@&{rec['role']}> role to enter.", ephemeral=True,
-                allowed_mentions=discord.AllowedMentions.none())
+                embed=status_embed("Can't Enter", f"You need the <@&{rec['role']}> role to enter **{rec['prize']}**.", RED),
+                ephemeral=True)
             return
         if user.id in rec["entries"]:
+            rec["entries"].remove(user.id)
+            embed = status_embed(
+                "You Left!",
+                f"You left the giveaway for **{rec['prize']}**.\nTotal entries: `{len(rec['entries'])}`\n"
+                "Click the gift button again to rejoin.", RED)
+        else:
+            rec["entries"].append(user.id)
+            embed = status_embed(
+                "You Are In!",
+                f"You entered the giveaway for **{rec['prize']}**.\nTotal entries: `{len(rec['entries'])}`\n"
+                "Click the gift button again to leave.", GREEN)
+        self.mark_dirty(rec["id"])
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def handle_entries(self, interaction: discord.Interaction) -> None:
+        rec = self._running(interaction)
+        if rec is None:
             await interaction.response.send_message(
-                "You're already in this giveaway.", ephemeral=True, view=LeaveView(self, message_id))
+                embed=status_embed("Giveaway Ended", "This giveaway has already ended.", RED), ephemeral=True)
             return
-        rec["entries"].append(user.id)
-        self.mark_dirty(message_id)
-        await interaction.response.send_message("You're in! Good luck 🎉", ephemeral=True)
+        view = EntriesView(rec)
+        await interaction.response.send_message(
+            embed=view.embed(), view=view if view.pages > 1 else discord.utils.MISSING, ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
 
     # ----------------------------------------------------------- commands
 
@@ -276,8 +377,9 @@ class GiveawayCog(commands.Cog):
         duration="How long it runs, e.g. 30m, 2h, 1d12h (10s to 60d)",
         winners="Number of winners (default 1)",
         channel="Where to post it (default: this channel)",
-        description="Extra text shown in the embed",
+        host_message="Shown under 'Message from Host'",
         required_role="Only members with this role can enter",
+        ping="Ping this role (or @everyone) when the giveaway starts",
     )
     async def start(
         self,
@@ -286,8 +388,9 @@ class GiveawayCog(commands.Cog):
         duration: str,
         winners: app_commands.Range[int, 1, 20] = 1,
         channel: Optional[discord.TextChannel] = None,
-        description: Optional[app_commands.Range[str, 1, 500]] = None,
+        host_message: Optional[app_commands.Range[str, 1, 500]] = None,
         required_role: Optional[discord.Role] = None,
+        ping: Optional[discord.Role] = None,
     ) -> None:
         seconds = parse_duration(duration)
         if seconds is None or not MIN_SECONDS <= seconds <= MAX_SECONDS:
@@ -299,9 +402,9 @@ class GiveawayCog(commands.Cog):
             await interaction.response.send_message("Pick a normal text channel.", ephemeral=True)
             return
         perms = target.permissions_for(interaction.guild.me)
-        if not (perms.view_channel and perms.send_messages and perms.embed_links):
+        if not (perms.view_channel and perms.send_messages):
             await interaction.response.send_message(
-                f"I need View Channel, Send Messages and Embed Links in {target.mention}.", ephemeral=True)
+                f"I need View Channel and Send Messages in {target.mention}.", ephemeral=True)
             return
         active = sum(1 for r in self.records.values() if r["guild"] == interaction.guild_id and not r.get("ended"))
         if active >= MAX_ACTIVE_PER_GUILD:
@@ -312,14 +415,14 @@ class GiveawayCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         rec: Record = dict(
             id=0, guild=interaction.guild_id, channel=target.id, host=interaction.user.id, prize=prize,
-            description=description or "", winners=winners, ends=int(time.time()) + seconds,
+            host_message=host_message or "", winners=winners,
+            ping=("@everyone" if ping.is_default() else ping.mention) if ping else "", ends=int(time.time()) + seconds,
             entries=[], role=required_role.id if required_role else None, ended=False, winner_ids=[],
         )
-        sent = await target.send(embed=build_embed({**rec, "id": "…"}), view=JoinView(self),
-                                 allowed_mentions=discord.AllowedMentions.none())
+        mentions = discord.AllowedMentions(everyone=True, roles=[ping]) if ping else discord.AllowedMentions.none()
+        sent = await target.send(view=build_layout(rec), allowed_mentions=mentions)
         rec["id"] = sent.id
         self.records[sent.id] = rec
-        await sent.edit(embed=build_embed(rec))
         await self.store.save(str(sent.id), rec)
         await interaction.followup.send(
             f"Giveaway started in {target.mention}. ID: `{sent.id}` ({sent.jump_url})", ephemeral=True)
@@ -330,7 +433,7 @@ class GiveawayCog(commands.Cog):
         prize="New prize",
         duration="New time left from now, e.g. 2h",
         winners="New number of winners",
-        description="New description text",
+        host_message="New host message",
     )
     async def edit(
         self,
@@ -339,7 +442,7 @@ class GiveawayCog(commands.Cog):
         prize: Optional[app_commands.Range[str, 1, 200]] = None,
         duration: Optional[str] = None,
         winners: Optional[app_commands.Range[int, 1, 20]] = None,
-        description: Optional[app_commands.Range[str, 1, 500]] = None,
+        host_message: Optional[app_commands.Range[str, 1, 500]] = None,
     ) -> None:
         rec = self._find(interaction, giveaway)
         if rec is None:
@@ -348,7 +451,7 @@ class GiveawayCog(commands.Cog):
         if rec.get("ended"):
             await interaction.response.send_message("That giveaway has already ended.", ephemeral=True)
             return
-        if prize is None and duration is None and winners is None and description is None:
+        if prize is None and duration is None and winners is None and host_message is None:
             await interaction.response.send_message("Fill in at least one thing to change.", ephemeral=True)
             return
         if duration is not None:
@@ -362,8 +465,8 @@ class GiveawayCog(commands.Cog):
             rec["prize"] = prize
         if winners is not None:
             rec["winners"] = winners
-        if description is not None:
-            rec["description"] = description
+        if host_message is not None:
+            rec["host_message"] = host_message
         await interaction.response.defer(ephemeral=True)
         await self._refresh_message(rec)
         await self.store.save(str(rec["id"]), rec)
