@@ -95,6 +95,6 @@ missing Manage Channels, bot not in the server).
 
 ## Errors, tests and CI
 
-Command and render errors are posted (rate-limited) as embeds to the log channel in `config.py`.
+Command and render errors are posted (rate-limited) as embeds to `ERROR_LOG_CHANNEL_ID` in `config.py` (separate from the deploy log channel).
 `CARD_LABEL_DEFAULT=1` turns the "generated image" footer on for everyone by default.
 `python -m pytest` runs the tests; `.github/workflows/ci.yml` runs them on every push.
