@@ -11,7 +11,7 @@ from discord.ext import commands
 
 log = logging.getLogger(__name__)
 
-EXTENSIONS = ("cogs.message", "cogs.stats", "cogs.admin")
+EXTENSIONS = ("cogs.message", "cogs.stats", "cogs.admin", "cogs.giveaway")
 
 
 class AdminCog(commands.Cog):
@@ -47,6 +47,12 @@ class AdminCog(commands.Cog):
             inline=False,
         )
         embed.add_field(
+            name="/giveaway start | edit | delete | list",
+            value="Giveaways with a Join button inside the embed (needs Manage Server). `edit` and `delete` "
+            "take the giveaway's message ID or link.",
+            inline=False,
+        )
+        embed.add_field(
             name="Text formatting",
             value="`**bold**` `*italic*` `__underline__` `~~strike~~` `` `code` `` `||spoiler||` `> quote`, "
             "pings, emoji and custom emoji all work.",
@@ -57,7 +63,7 @@ class AdminCog(commands.Cog):
     @commands.command(name="reload")
     @commands.is_owner()
     async def reload(self, ctx: commands.Context, extension: Optional[str] = None) -> None:
-        """!reload [cog]: reload one cog (message, stats, admin) or all of them (owner only)."""
+        """!reload [cog]: reload one cog (message, stats, admin, giveaway) or all of them (owner only)."""
         names = EXTENSIONS
         if extension:
             wanted = extension if extension.startswith("cogs.") else f"cogs.{extension}"

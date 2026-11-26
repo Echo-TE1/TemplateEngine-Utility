@@ -73,3 +73,12 @@ def test_timezone_per_user():
     assert valid_timezone("Asia/Tokyo") and not valid_timezone("Nope/Zone") and not valid_timezone("")
     assert resolve_timestamp("12h", "Asia/Tokyo").startswith("Today at ")
     assert resolve_timestamp("12h", "bogus").startswith("Today at ")
+
+
+def test_duration_and_refs():
+    from timeutil import parse_duration, parse_message_ref
+    assert parse_duration("1h30m") == 5400 and parse_duration("2d") == 172800 and parse_duration("45 min") == 2700
+    assert parse_duration("soon") is None and parse_duration("") is None and parse_duration("5x") is None
+    assert parse_message_ref("123456") == 123456
+    assert parse_message_ref("https://discord.com/channels/1/2/3456") == 3456
+    assert parse_message_ref("nope") is None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -63,3 +64,26 @@ def conversation_timestamps(count: int, value: Optional[str], tz: Optional[str] 
     military = key in CLOCK_24
     now = _now(tz)
     return [_format(now - timedelta(minutes=count - 1 - i), military) for i in range(count)]
+
+
+_DURATION_RE = re.compile(r"(\d+)\s*(w|d|h|m|s)", re.I)
+_UNIT_SECONDS = {"w": 604800, "d": 86400, "h": 3600, "m": 60, "s": 1}
+_LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(?:\d+|@me)/(\d+)/(\d+)")
+
+
+def parse_duration(text: str) -> Optional[int]:
+    """'1h30m', '2d', '45 min' style text -> seconds (None if it isn't a duration)."""
+    cleaned = (text or "").strip().lower().replace("min", "m").replace("mins", "m")
+    if not cleaned or _DURATION_RE.sub("", cleaned).replace(",", "").strip():
+        return None
+    total = sum(int(n) * _UNIT_SECONDS[u.lower()] for n, u in _DURATION_RE.findall(cleaned))
+    return total or None
+
+
+def parse_message_ref(text: str) -> Optional[int]:
+    """A message ID or a message link -> the message ID."""
+    text = (text or "").strip()
+    match = _LINK_RE.search(text)
+    if match:
+        return int(match.group(2))
+    return int(text) if text.isdigit() else None
