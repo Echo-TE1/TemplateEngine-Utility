@@ -108,6 +108,17 @@ giveaway's message ID or link (autocomplete lists them). `reroll` never picks an
 Entries are stored in a private `giveaway-data` channel the bot creates in the home server (needs Manage
 Channels), so giveaways survive redeploys; ended ones stay rerollable for 30 days.
 
+## Usage tracking and the bandwidth guard
+
+Render suspends a free service that goes over its 5 GB bandwidth, so `cogs/usage.py` keeps a monthly tally
+(images made, GIFs, average size, outbound/inbound network, uptime) in a private `usage-data` channel.
+`!usage` (owner) shows it. The bandwidth figure is an estimate from the container's network counters; run
+`!usage calibrate <MB>` once with the number from Render's usage page to line it up. Warnings go to the error-log
+channel at 70%, 90% and 95%, and from `GUARD_PERCENT` (default 95) image generation pauses for everyone but
+the owner until the month resets. Optional env vars: `BANDWIDTH_LIMIT_MB` (default 5120), `GUARD_PERCENT`, and
+`RENDER_API_KEY` (adds pipeline minutes and the service count to `!usage`; `RENDER_SERVICE_ID` is set by Render).
+Months are calendar months (UTC); Render's own cycle may start on another day.
+
 ## Errors, tests and CI
 
 Command and render errors are posted (rate-limited) as embeds to `ERROR_LOG_CHANNEL_ID` in `config.py` (separate from the deploy log channel).

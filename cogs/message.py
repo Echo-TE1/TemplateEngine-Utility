@@ -263,6 +263,17 @@ class MessageCog(commands.Cog):
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             raise UserError(f"Couldn't download the {what}. Please try again.")
 
+    async def _limited(self, interaction: discord.Interaction) -> bool:
+        """True (and tells the user) when generation is paused to protect the hosting bandwidth limit."""
+        usage = self.bot.get_cog("UsageCog")
+        if usage is None or await self.bot.is_owner(interaction.user):
+            return False
+        allowed, text = usage.render_allowed()
+        if allowed:
+            return False
+        await interaction.followup.send(text, ephemeral=True)
+        return True
+
     async def _send_card(self, interaction: discord.Interaction, messages: list[MessageSpec], *,
                          theme: str, custom: dict[str, bytes], as_gif: bool, label: bool, filename: str) -> None:
         try:
@@ -273,6 +284,9 @@ class MessageCog(commands.Cog):
             await report_error(self.bot, f"rendering {filename}", exc, user=interaction.user, guild=interaction.guild)
             await interaction.followup.send("Something went wrong while rendering the image.", ephemeral=True)
             return
+        usage = self.bot.get_cog("UsageCog")
+        if usage is not None:
+            usage.record_render(buffer.getbuffer().nbytes, ext == "gif")
         await interaction.followup.send(file=discord.File(buffer, filename=f"{filename}.{ext}"))
 
     # --------------------------------------------------------------- command
@@ -323,6 +337,8 @@ class MessageCog(commands.Cog):
         role_icon: bool = True,
     ) -> None:
         await interaction.response.defer(thinking=True)
+        if await self._limited(interaction):
+            return
         try:
             await self._message(
                 interaction, text, user, theme, image, timestamp, mention_highlight, reactions, togif,
@@ -432,6 +448,8 @@ class MessageCog(commands.Cog):
         label: Optional[bool] = None,
     ) -> None:
         await interaction.response.defer(thinking=True)
+        if await self._limited(interaction):
+            return
         try:
             await self._conversation(interaction, script, theme, timestamp, use_username, hide_clantags, label)
         except UserError as exc:

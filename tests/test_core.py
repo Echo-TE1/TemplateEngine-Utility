@@ -82,3 +82,17 @@ def test_duration_and_refs():
     assert parse_message_ref("123456") == 123456
     assert parse_message_ref("https://discord.com/channels/1/2/3456") == 3456
     assert parse_message_ref("nope") is None
+
+
+def test_usage_math():
+    from usage_math import bar, counter_delta, fmt_bytes, parse_net_dev, percent
+    sample = ("Inter-|   Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets\n"
+              "    lo: 100 1 0 0 0 0 0 0 100 1 0 0 0 0 0 0\n"
+              "  eth0: 5000 10 0 0 0 0 0 0 7000 9 0 0 0 0 0 0\n")
+    assert parse_net_dev(sample) == (5000, 7000)
+    assert parse_net_dev("") is None
+    assert counter_delta((10, 20), (15, 30)) == (5, 10)
+    assert counter_delta((1000, 2000), (5, 7)) == (5, 7)  # container restarted
+    assert percent(50, 100) == 50 and percent(1, 0) == 0
+    assert fmt_bytes(267 * 1024 * 1024) == "267 MB" and fmt_bytes(5 * 1024 ** 3) == "5.00 GB"
+    assert bar(50, 10).count("\u2593") == 5
