@@ -2,7 +2,7 @@
 
 Modelled on the Template Engine / Edith bot's giveaways: one purple card with a
 gift button and an Entries (n) button inside it, join/leave embeds, a winner
-card, luck roles, ping_everyone, a message from the host, end-now and reroll.
+card, luck roles, a role ping, a message from the host, end-now and reroll.
 
 Entries, end time and winners are kept in a private storage channel
 (blob_store.py), so running giveaways survive redeploys and are ended on time
@@ -540,7 +540,7 @@ class GiveawayCog(commands.Cog):
         luck_role="Role that gets the luck boost (needs luck).",
         luck_role_2="Another role that gets the luck boost.",
         luck_role_3="Another role that gets the luck boost.",
-        ping_everyone="True pings @everyone when the giveaway starts (default False).",
+        ping="Role to ping when the giveaway starts (pick @everyone to ping everyone).",
         host_message="A message from the host, shown on the giveaway.",
         required_role="Only members with this role can enter.",
     )
@@ -559,7 +559,7 @@ class GiveawayCog(commands.Cog):
         luck_role: Optional[discord.Role] = None,
         luck_role_2: Optional[discord.Role] = None,
         luck_role_3: Optional[discord.Role] = None,
-        ping_everyone: bool = False,
+        ping: Optional[discord.Role] = None,
         host_message: Optional[app_commands.Range[str, 1, 500]] = None,
         required_role: Optional[discord.Role] = None,
     ) -> None:
@@ -587,12 +587,12 @@ class GiveawayCog(commands.Cog):
                 embed=err("Missing Permission", f"I need `View Channel` and `Send Messages` in {target.mention}."),
                 ephemeral=True)
             return
-        if ping_everyone and not perms.mention_everyone:
+        if ping is not None and not (perms.mention_everyone or (ping.mentionable and not ping.is_default())):
             await interaction.response.send_message(
                 embed=err("Missing Permission",
-                          f"I need `Mention Everyone` in {target.mention} to ping @everyone. Give me the "
-                          "permission or set `ping_everyone` to False."),
-                ephemeral=True)
+                          f"I can't ping {ping.mention if not ping.is_default() else '@everyone'} in {target.mention}. "
+                          "Give me the `Mention Everyone` permission there, make the role mentionable, or leave `ping` empty."),
+                ephemeral=True, allowed_mentions=NO_PINGS)
             return
         active = sum(1 for r in self.records.values() if r["guild"] == interaction.guild_id and not r.get("ended"))
         if active >= MAX_ACTIVE_PER_GUILD:
@@ -605,12 +605,17 @@ class GiveawayCog(commands.Cog):
         rec: Record = dict(
             id=0, guild=interaction.guild_id, channel=target.id, host=interaction.user.id, prize=prize,
             winners=int(winners), ends=int(time.time()) + seconds, entries=[], ended=False, winner_ids=[],
-            past_winners=[], host_message=host_message or "", ping="@everyone" if ping_everyone else "", role=required_role.id if required_role else None,
+            past_winners=[], host_message=host_message or "", ping=("@everyone" if ping.is_default() else ping.mention) if ping else "", role=required_role.id if required_role else None,
             luck=int(luck.value) if luck else 1, luck_roles=luck_roles,
         )
         try:
             # the @everyone line is part of this one message, so it pings when the giveaway is posted
-            allowed = discord.AllowedMentions(everyone=True) if ping_everyone else NO_PINGS
+            if ping is None:
+                allowed = NO_PINGS
+            elif ping.is_default():
+                allowed = discord.AllowedMentions(everyone=True)
+            else:
+                allowed = discord.AllowedMentions(roles=[ping])
             sent = await target.send(view=build_layout(rec), allowed_mentions=allowed)
         except discord.HTTPException as exc:
             await interaction.followup.send(embed=err("Could Not Post Giveaway", f"`{exc}`"), ephemeral=True)
@@ -626,7 +631,7 @@ class GiveawayCog(commands.Cog):
             details.append(("Required Role", required_role.mention))
         if host_message:
             details.append(("Message From Host", host_message))
-        details.append(("Ping", "`@everyone`" if ping_everyone else "`No ping`"))
+        details.append(("Ping", rec["ping"] or "`No ping`"))
         await self._log("Giveaway Started", GREEN, rec, by=interaction.user.id, extra=tuple(details))
 
         card = ok("Giveaway Created", f"Posted in {target.mention}.\n[Jump to giveaway]({sent.jump_url})")
@@ -634,7 +639,7 @@ class GiveawayCog(commands.Cog):
             card.add_field(name="Luck Boost", value=luck_text(rec).replace("**Luck:** ", ""), inline=False)
         if host_message:
             card.add_field(name="Message From Host", value=host_message, inline=False)
-        card.add_field(name="Ping", value="`@everyone`" if ping_everyone else "`No ping`", inline=True)
+        card.add_field(name="Ping", value=f"`{rec['ping']}`" if rec["ping"] else "`No ping`", inline=True)
         card.add_field(name="Message ID", value=f"`{sent.id}`", inline=True)
         card.add_field(name="Ends", value=f"<t:{rec['ends']}:R>", inline=True)
         await interaction.followup.send(embed=card, ephemeral=True)
