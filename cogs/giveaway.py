@@ -89,6 +89,8 @@ def build_layout(rec: Record) -> discord.ui.LayoutView:
     entries = len(rec["entries"])
 
     container = discord.ui.Container(accent_colour=discord.Colour(GRAY if ended else PURPLE))
+    if rec.get("ping"):  # first line inside the card
+        container.add_item(discord.ui.TextDisplay(rec["ping"]))
     container.add_item(discord.ui.TextDisplay(f"### {rec['prize']}"))
     if ended:
         winners = rec.get("winner_ids", [])
@@ -121,8 +123,6 @@ def build_layout(rec: Record) -> discord.ui.LayoutView:
     container.add_item(row)
 
     view = discord.ui.LayoutView(timeout=None)
-    if rec.get("ping"):  # the @everyone line sits at the top of the same message
-        view.add_item(discord.ui.TextDisplay(rec["ping"]))
     view.add_item(container)
     return view
 

@@ -103,7 +103,7 @@ turns grey and the bot replies with a winner card.
 
 `create` options: `prize`, `duration` (`1s` to `12mo`, any mix: `45s`, `30m`, `2h`, `1d12h`, `2w`, `6mo`; a month is 30 days), `winners`, `channel`,
 `luck` + `luck_role` / `luck_role_2` / `luck_role_3` (those roles are 2x/3x/5x/10x as likely to win),
-`ping_everyone` (the @everyone line is at the top of the giveaway message itself, so it pings once, when posted), `host_message` and `required_role`. `edit`, `end`, `reroll`, `delete` and `status` take the
+`ping_everyone` (the @everyone line is the first line inside the card, so it pings once, when posted), `host_message` and `required_role`. `edit`, `end`, `reroll`, `delete` and `status` take the
 giveaway's message ID or link (autocomplete lists them). `reroll` never picks an earlier winner again.
 Entries are stored in a private `giveaway-data` channel the bot creates in the home server (needs Manage
 Channels), so giveaways survive redeploys; ended ones stay rerollable for 30 days.
