@@ -44,6 +44,10 @@ GOLD = 0xF1C40F
 GRAY = 0x95A5A6
 JOIN_ID = "giveaway_enter"
 ENTRIES_ID = "giveaway_entries"
+# ids used by the first version of the cards: those old messages must keep working
+JOIN_IDS = {JOIN_ID, "giveaway:join"}
+ENTRIES_IDS = {ENTRIES_ID, "giveaway:entries"}
+RETRY_LOAD_SECONDS = 60
 NO_PINGS = discord.AllowedMentions.none()
 
 Record = dict[str, Any]
@@ -176,23 +180,47 @@ class GiveawayCog(commands.Cog):
         self.store = BlobStore(bot, STORE_CHANNEL)
         self.records: dict[int, Record] = {}
         self._dirty: set[int] = set()
-        self._loaded = False
+        self._loaded = False  # True once the stored giveaways were read successfully
+        self._load_lock = asyncio.Lock()
+        self._next_load_try = 0.0
         self.debug: dict[str, Any] = {"last_tick": 0.0, "stage": "not started", "last_error": None}
 
     # ---------------------------------------------------------- lifecycle
 
     async def cog_unload(self) -> None:
+        """Runs when the bot shuts down for a redeploy: save entries that joined in the last few seconds."""
         self.tick.cancel()
+        for message_id in list(self._dirty):
+            rec = self.records.get(message_id)
+            if rec is not None:
+                try:
+                    await asyncio.wait_for(self._save(rec), timeout=8)
+                except Exception:
+                    log.warning("Could not flush giveaway %s on shutdown", message_id)
+
+    async def ensure_loaded(self) -> None:
+        """Read the stored giveaways (retried until it works). Button clicks wait for this, so a click right
+        after a redeploy is never answered with 'not found'."""
+        if self._loaded:
+            return
+        async with self._load_lock:
+            if self._loaded or time.time() < self._next_load_try:
+                return
+            stored = await self.store.load_all()
+            for key, rec in stored.items():
+                try:
+                    self.records.setdefault(int(key), rec)  # never overwrite a newer in-memory change
+                except (ValueError, TypeError):
+                    continue
+            if self.store.persistent:
+                self._loaded = True
+                log.info("Loaded %d stored giveaway(s)", len(self.records))
+            else:
+                self._next_load_try = time.time() + RETRY_LOAD_SECONDS
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        if not self._loaded:
-            self._loaded = True
-            for key, rec in (await self.store.load_all()).items():
-                try:
-                    self.records[int(key)] = rec
-                except (ValueError, TypeError):
-                    continue
+        await self.ensure_loaded()
         if not self.tick.is_running():
             self.tick.start()
 
@@ -207,6 +235,7 @@ class GiveawayCog(commands.Cog):
     @tasks.loop(seconds=FLUSH_SECONDS)
     async def tick(self) -> None:
         try:
+            await self.ensure_loaded()  # retries if the storage channel was not readable at startup
             now = time.time()
             self.debug["last_tick"] = now
             for message_id, rec in list(self.records.items()):
@@ -421,10 +450,11 @@ class GiveawayCog(commands.Cog):
         if interaction.type is not discord.InteractionType.component:
             return
         custom_id = (interaction.data or {}).get("custom_id")
-        if custom_id not in (JOIN_ID, ENTRIES_ID):
+        if custom_id not in JOIN_IDS | ENTRIES_IDS:
             return
         try:
-            if custom_id == JOIN_ID:
+            await self.ensure_loaded()
+            if custom_id in JOIN_IDS:
                 await self.handle_join(interaction)
             else:
                 await self.handle_entries(interaction)

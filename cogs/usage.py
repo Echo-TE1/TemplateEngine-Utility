@@ -68,6 +68,10 @@ class UsageCog(commands.Cog):
     async def cog_unload(self) -> None:
         self.sample.cancel()
         self.hourly.cancel()
+        try:  # keep the counters from the last few minutes across a redeploy
+            await self.store.save(self.rec["month"], self.rec)
+        except Exception:
+            pass
         if self.session is not None:
             await self.session.close()
 

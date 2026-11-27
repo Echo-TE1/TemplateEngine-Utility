@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 
 import discord
 from aiohttp import web
@@ -138,6 +139,13 @@ async def main() -> None:
     for index, options in enumerate(attempts):
         try:
             async with QuoteBot(**options) as bot:
+                # Render stops the old instance with SIGTERM on every deploy. Closing cleanly lets the cogs
+                # save pending data (giveaway entries, usage counters) before the process ends.
+                try:
+                    asyncio.get_running_loop().add_signal_handler(
+                        signal.SIGTERM, lambda: asyncio.ensure_future(bot.close()))
+                except (NotImplementedError, RuntimeError):
+                    pass
                 await bot.start(token)
             return
         except discord.PrivilegedIntentsRequired:
