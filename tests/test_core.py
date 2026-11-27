@@ -78,6 +78,9 @@ def test_timezone_per_user():
 def test_duration_and_refs():
     from timeutil import parse_duration, parse_message_ref
     assert parse_duration("1h30m") == 5400 and parse_duration("2d") == 172800 and parse_duration("45 min") == 2700
+    assert parse_duration("1s") == 1 and parse_duration("12mo") == 12 * 30 * 86400 and parse_duration("1y") == 365 * 86400
+    assert parse_duration("2 weeks 3 days") == 17 * 86400 and parse_duration("1d12h") == 129600 and parse_duration("90 seconds") == 90
+    assert parse_duration("5mins") == 300 and parse_duration("0s") is None and parse_duration("1x") is None
     assert parse_duration("soon") is None and parse_duration("") is None and parse_duration("5x") is None
     assert parse_message_ref("123456") == 123456
     assert parse_message_ref("https://discord.com/channels/1/2/3456") == 3456

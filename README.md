@@ -101,7 +101,7 @@ Integrations). The giveaway is one purple card with a gift button and an **Entri
 gift button enters you, pressing it again leaves; **Entries** lists everyone who joined. When it ends the card
 turns grey and the bot replies with a winner card.
 
-`create` options: `prize`, `duration` (`30s` to `1y`: `30m`, `2h`, `1d`, `1w`), `winners`, `channel`,
+`create` options: `prize`, `duration` (`1s` to `12mo`, any mix: `45s`, `30m`, `2h`, `1d12h`, `2w`, `6mo`; a month is 30 days), `winners`, `channel`,
 `luck` + `luck_role` / `luck_role_2` / `luck_role_3` (those roles are 2x/3x/5x/10x as likely to win),
 `ping_everyone`, `host_message` and `required_role`. `edit`, `end`, `reroll`, `delete` and `status` take the
 giveaway's message ID or link (autocomplete lists them). `reroll` never picks an earlier winner again.

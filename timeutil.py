@@ -66,17 +66,34 @@ def conversation_timestamps(count: int, value: Optional[str], tz: Optional[str] 
     return [_format(now - timedelta(minutes=count - 1 - i), military) for i in range(count)]
 
 
-_DURATION_RE = re.compile(r"(\d+)\s*(w|d|h|m|s)", re.I)
-_UNIT_SECONDS = {"w": 604800, "d": 86400, "h": 3600, "m": 60, "s": 1}
+_DURATION_RE = re.compile(r"(\d+)\s*([a-z]+)")
+_UNIT_SECONDS = {
+    "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
+    "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+    "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600,
+    "d": 86400, "day": 86400, "days": 86400,
+    "w": 604800, "wk": 604800, "wks": 604800, "week": 604800, "weeks": 604800,
+    "mo": 30 * 86400, "mos": 30 * 86400, "month": 30 * 86400, "months": 30 * 86400,
+    "y": 365 * 86400, "yr": 365 * 86400, "yrs": 365 * 86400, "year": 365 * 86400, "years": 365 * 86400,
+}
 _LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(?:\d+|@me)/(\d+)/(\d+)")
 
 
 def parse_duration(text: str) -> Optional[int]:
-    """'1h30m', '2d', '45 min' style text -> seconds (None if it isn't a duration)."""
-    cleaned = (text or "").strip().lower().replace("min", "m").replace("mins", "m")
-    if not cleaned or _DURATION_RE.sub("", cleaned).replace(",", "").strip():
+    """'1h30m', '2d', '45 min', '3 months', '1y' style text -> seconds, or
+    None if it isn't a duration. Months are 30 days, years 365."""
+    cleaned = (text or "").strip().lower().replace(",", " ")
+    if not cleaned:
         return None
-    total = sum(int(n) * _UNIT_SECONDS[u.lower()] for n, u in _DURATION_RE.findall(cleaned))
+    total, matched = 0, 0
+    for number, unit in _DURATION_RE.findall(cleaned):
+        if unit not in _UNIT_SECONDS:
+            return None
+        total += int(number) * _UNIT_SECONDS[unit]
+        matched += 1
+    leftover = _DURATION_RE.sub("", cleaned).strip()
+    if not matched or leftover:
+        return None
     return total or None
 
 

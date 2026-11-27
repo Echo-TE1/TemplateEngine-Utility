@@ -31,8 +31,8 @@ log = logging.getLogger(__name__)
 
 STORE_CHANNEL = "giveaway-data"
 MAX_ACTIVE_PER_GUILD = 25
-MIN_SECONDS = 30
-MAX_SECONDS = 365 * 86400
+MIN_SECONDS = 1
+MAX_SECONDS = 365 * 86400  # 12 months
 KEEP_ENDED_SECONDS = 30 * 86400  # ended giveaways stay rerollable for 30 days
 FLUSH_SECONDS = 5
 PAGE_SIZE = 20
@@ -501,7 +501,7 @@ class GiveawayCog(commands.Cog):
     @giveaway.command(name="create", description="Start a giveaway.")
     @app_commands.describe(
         prize="What is being given away.",
-        duration="How long it runs, e.g. 30m, 2h, 1d, 1w.",
+        duration="How long it runs, from 1s to 12 months, e.g. 45s, 30m, 2h, 1d12h, 2w, 6mo.",
         winners="Number of winners (default 1).",
         channel="Where to post it (defaults to this channel).",
         luck="Optional. How much more likely luck-role members are to win.",
@@ -541,7 +541,7 @@ class GiveawayCog(commands.Cog):
         seconds = parse_duration(duration)
         if seconds is None or not MIN_SECONDS <= seconds <= MAX_SECONDS:
             await interaction.response.send_message(
-                embed=err("Invalid Duration", "Use a duration between `30s` and `1y`, for example `30m`, `2h`, `1d` or `1w`."),
+                embed=err("Invalid Duration", "Use a duration from `1s` to `12mo`, for example `45s`, `30m`, `2h`, `1d12h`, `2w` or `6mo` (a month is 30 days)."),
                 ephemeral=True)
             return
         target = channel or interaction.channel
@@ -615,7 +615,7 @@ class GiveawayCog(commands.Cog):
         message_id="The giveaway to edit (message ID or link).",
         prize="New prize.",
         winners="New number of winners.",
-        duration="New time left from now, e.g. 1h, 2d.",
+        duration="New time left from now (1s to 12 months), e.g. 1h, 2d, 3mo.",
         host_message="New message from the host.",
     )
     async def edit(
@@ -645,7 +645,7 @@ class GiveawayCog(commands.Cog):
             seconds = parse_duration(duration)
             if seconds is None or not MIN_SECONDS <= seconds <= MAX_SECONDS:
                 await interaction.response.send_message(
-                    embed=err("Invalid Duration", "Use a duration between `30s` and `1y`."), ephemeral=True)
+                    embed=err("Invalid Duration", "Use a duration from `1s` to `12mo`, for example `45s`, `2h`, `1d12h` or `6mo`."), ephemeral=True)
                 return
             changes.append(f"Ends: <t:{rec['ends']}:R> \u2192 <t:{int(time.time()) + seconds}:R>")
             rec["ends"] = int(time.time()) + seconds
