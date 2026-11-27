@@ -11,7 +11,7 @@ from discord.ext import commands
 
 log = logging.getLogger(__name__)
 
-EXTENSIONS = ("cogs.message", "cogs.stats", "cogs.admin", "cogs.giveaway", "cogs.usage")
+EXTENSIONS = ("cogs.message", "cogs.stats", "cogs.admin", "cogs.giveaway", "cogs.usage", "cogs.botlog")
 
 
 class AdminCog(commands.Cog):
@@ -63,7 +63,7 @@ class AdminCog(commands.Cog):
     @commands.command(name="reload")
     @commands.is_owner()
     async def reload(self, ctx: commands.Context, extension: Optional[str] = None) -> None:
-        """!reload [cog]: reload one cog (message, stats, admin, giveaway, usage) or all of them (owner only)."""
+        """!reload [cog]: reload one cog (message, stats, admin, giveaway, usage, botlog) or all of them (owner only)."""
         names = EXTENSIONS
         if extension:
             wanted = extension if extension.startswith("cogs.") else f"cogs.{extension}"

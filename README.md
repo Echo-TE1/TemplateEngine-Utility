@@ -119,6 +119,18 @@ the owner until the month resets. Optional env vars: `BANDWIDTH_LIMIT_MB` (defau
 `RENDER_API_KEY` (adds pipeline minutes and the service count to `!usage`; `RENDER_SERVICE_ID` is set by Render).
 Months are calendar months (UTC); Render's own cycle may start on another day.
 
+## Log channels
+
+All logs use one clean card style (`logcard.py`: title, thin lines between items, bold labels, timestamp). IDs
+are in `config.py`:
+- **Usage log:** posted at the start of every hour (UTC clock): bandwidth bar, last hour and month totals, uptime,
+  guard status, and pipeline minutes/services when `RENDER_API_KEY` is set.
+- **Bot data log:** server joined / left (with totals) and when someone saves or resets their `/defaults`.
+  Generated text and images are never logged.
+- **Giveaway log:** started, edited (with what changed), deleted, rerolled and ended (also ended early), showing the
+  prize, host, who did it, winners (mention, username, ID), entries, channel, end time and a jump link.
+- **Error log** and **deploy log** are separate channels, as before.
+
 ## Errors, tests and CI
 
 Command and render errors are posted (rate-limited) as embeds to `ERROR_LOG_CHANNEL_ID` in `config.py` (separate from the deploy log channel).

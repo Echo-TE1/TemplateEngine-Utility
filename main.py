@@ -66,6 +66,7 @@ class QuoteBot(commands.Bot):
         await self.load_extension("cogs.admin")
         await self.load_extension("cogs.giveaway")
         await self.load_extension("cogs.usage")
+        await self.load_extension("cogs.botlog")
         self.tree.on_error = self.on_app_command_error
         await self.sync_commands()
         self._keep_alive = await start_keep_alive()

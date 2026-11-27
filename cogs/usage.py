@@ -28,8 +28,9 @@ import discord
 from discord.ext import commands, tasks
 
 from blob_store import BlobStore
-from config import ERROR_LOG_CHANNEL_ID
+from config import ERROR_LOG_CHANNEL_ID, USAGE_LOG_CHANNEL_ID
 from error_log import report_error
+from logcard import GREEN, GOLD, PURPLE, RED, send_log
 from usage_math import MB, bar, counter_delta, fmt_bytes, month_key, percent, read_net
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,8 @@ class UsageCog(commands.Cog):
         self._last_net: Optional[tuple[int, int]] = None
         self._last_time: Optional[float] = None
         self.session: Optional[aiohttp.ClientSession] = None
+        self._hour = ""  # the hour (UTC) the last report covered up to
+        self._base: dict[str, float] = {}  # counters at the last report
 
     @staticmethod
     def _blank(month: str) -> dict[str, Any]:
@@ -64,6 +67,7 @@ class UsageCog(commands.Cog):
 
     async def cog_unload(self) -> None:
         self.sample.cancel()
+        self.hourly.cancel()
         if self.session is not None:
             await self.session.close()
 
@@ -77,6 +81,10 @@ class UsageCog(commands.Cog):
                 self.rec = {**self._blank(month), **saved[month]}
         if not self.sample.is_running():
             self.sample.start()
+        if not self.hourly.is_running():
+            self._hour = self._hour_key()
+            self._snapshot()
+            self.hourly.start()
 
     # ----------------------------------------------------------- tracking
 
@@ -116,6 +124,62 @@ class UsageCog(commands.Cog):
     @sample.before_loop
     async def _before_sample(self) -> None:
         await self.bot.wait_until_ready()
+
+    # ------------------------------------------------------- hourly report
+
+    @staticmethod
+    def _hour_key() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d %H")
+
+    def _snapshot(self) -> None:
+        self._base = {"renders": self.rec["renders"], "gif": self.rec["gif"],
+                      "tx": self.rec["net_tx"], "rx": self.rec["net_rx"], "bytes": self.rec["image_bytes"]}
+
+    @tasks.loop(seconds=30)
+    async def hourly(self) -> None:
+        """Post the usage report at the start of every hour (UTC clock; the
+        minute marks are the same in every timezone with whole-hour offsets)."""
+        try:
+            key = self._hour_key()
+            if key == self._hour:
+                return
+            self._hour = key
+            await self.post_report()
+        except Exception as exc:
+            await report_error(self.bot, "hourly usage report", exc)
+
+    @hourly.before_loop
+    async def _before_hourly(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def post_report(self) -> None:
+        self._roll()
+        rec, base = self.rec, self._base or {}
+        pct = self.used_percent()
+        guard = "Paused (limit reached)" if pct >= GUARD_PERCENT else "Active"
+        colour = RED if pct >= 90 else GOLD if pct >= 70 else GREEN
+        hour_images = rec["renders"] - int(base.get("renders", rec["renders"]))
+        hour_gifs = rec["gif"] - int(base.get("gif", rec["gif"]))
+        hour_tx = rec["net_tx"] - base.get("tx", rec["net_tx"])
+        hour_rx = rec["net_rx"] - base.get("rx", rec["net_rx"])
+        avg = rec["image_bytes"] / rec["renders"] if rec["renders"] else 0
+        items = [
+            ("Bandwidth This Month", f"`{bar(pct)}` **{pct:.1f}%**\n{fmt_bytes(self.used_bytes())} of "
+                                      f"{fmt_bytes(LIMIT_MB * MB)}"),
+            ("Last Hour", f"`{hour_images:,}` images (`{hour_gifs:,}` GIFs)\nOut {fmt_bytes(max(hour_tx, 0))} \u2022 "
+                          f"In {fmt_bytes(max(hour_rx, 0))}"),
+            ("This Month", f"`{rec['renders']:,}` images (`{rec['gif']:,}` GIFs) \u2022 avg {fmt_bytes(avg)}\n"
+                           f"Out {fmt_bytes(rec['net_tx'])} \u2022 In {fmt_bytes(rec['net_rx'])}"),
+            ("Uptime", f"`{rec['uptime'] / 3600:.1f}` h of `{FREE_HOURS}` h free hours (bot's own count)"),
+            ("Image Generation", f"{guard} \u2022 pauses at {GUARD_PERCENT:.0f}%"),
+        ]
+        api = await self._render_api()
+        if api and "error" not in api:
+            if "pipeline_minutes" in api:
+                items.append(("Pipeline Minutes", f"`{api['pipeline_minutes']:.0f}` of `{FREE_PIPELINE_MINUTES}` (about)"))
+            items.append(("Services", f"`{api['services']}` of `25`"))
+        self._snapshot()
+        await send_log(self.bot, USAGE_LOG_CHANNEL_ID, f"Hourly Usage \u2022 {rec['month']}", colour, items)
 
     # -------------------------------------------------------------- guard
 

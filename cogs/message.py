@@ -586,6 +586,8 @@ class MessageCog(commands.Cog):
             await interaction.followup.send("Fill in at least one option to save.", ephemeral=True)
             return
         saved = await store.update(interaction.user.id, values)
+        self.bot.dispatch("defaults_changed", interaction.user.id, "set",
+                          {k: v for k, v in values.items() if v is not None})
         note = "" if store.persistent else "\n-# These will be forgotten when the bot restarts (no storage channel)."
         await interaction.followup.send("Saved.\n" + describe_defaults(saved) + note, ephemeral=True)
 
@@ -616,6 +618,7 @@ class MessageCog(commands.Cog):
         store = getattr(self.bot, "settings", None)
         if store is not None:
             await store.reset(interaction.user.id)
+            self.bot.dispatch("defaults_changed", interaction.user.id, "reset", {})
         await interaction.followup.send("Your defaults were reset.", ephemeral=True)
 
 

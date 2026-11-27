@@ -22,7 +22,9 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from blob_store import BlobStore
+from config import GIVEAWAY_LOG_CHANNEL_ID
 from error_log import report_error
+from logcard import send_log
 from timeutil import parse_duration, parse_message_ref
 
 log = logging.getLogger(__name__)
@@ -365,7 +367,30 @@ class GiveawayCog(commands.Cog):
         except discord.HTTPException:
             pass
 
-    async def finish(self, rec: Record, early: bool = False) -> list[discord.Member]:
+    @staticmethod
+    def _winner_lines(winners: list[discord.Member]) -> str:
+        return "\n".join(f"{m.mention} \u2022 {m.name} \u2022 `{m.id}`" for m in winners) or "No valid entries"
+
+    async def _log(self, title: str, colour: int, rec: Record, *, by: Optional[int] = None,
+                   winners: Optional[list[discord.Member]] = None, extra: tuple = ()) -> None:
+        """One card in the giveaway log channel."""
+        link = f"https://discord.com/channels/{rec['guild']}/{rec['channel']}/{rec['id']}"
+        items = [("Prize", rec["prize"]), ("Host", f"<@{rec['host']}>")]
+        if by:
+            items.append(("Action By", f"<@{by}>"))
+        if winners is not None:
+            items.append(("Winner" if len(winners) == 1 else "Winners", self._winner_lines(winners)))
+        items += list(extra)
+        items += [
+            ("Entries", f"`{len(rec['entries'])}`"),
+            ("Winners Allowed", f"`{rec['winners']}`"),
+            ("Channel", f"<#{rec['channel']}>"),
+            ("Ends" if not rec.get("ended") else "Ended", f"<t:{int(rec['ends'])}:F> (<t:{int(rec['ends'])}:R>)"),
+            ("Giveaway", f"[Jump to giveaway]({link})\nMessage ID `{rec['id']}`"),
+        ]
+        await send_log(self.bot, GIVEAWAY_LOG_CHANNEL_ID, title, colour, items)
+
+    async def finish(self, rec: Record, early: bool = False, by: Optional[int] = None) -> list[discord.Member]:
         """End a giveaway: pick winners, update the card, announce."""
         if rec.get("ended"):
             return []
@@ -386,6 +411,7 @@ class GiveawayCog(commands.Cog):
         announced = await self._announce(rec, winners, message)
         if not announced:
             await self._tell_host(rec, winners)
+        await self._log("Giveaway Ended Early" if early else "Giveaway Ended", PURPLE, rec, by=by, winners=winners)
         return winners
 
     # ------------------------------------------------------------ buttons
@@ -564,6 +590,16 @@ class GiveawayCog(commands.Cog):
             except discord.HTTPException as exc:
                 log.warning("Giveaway ping failed: %s", exc)
 
+        details = []
+        if luck_text(rec):
+            details.append(("Luck Boost", luck_text(rec).replace("**Luck:** ", "")))
+        if required_role:
+            details.append(("Required Role", required_role.mention))
+        if host_message:
+            details.append(("Message From Host", host_message))
+        details.append(("Ping", "`@everyone`" if ping_everyone else "`No ping`"))
+        await self._log("Giveaway Started", GREEN, rec, by=interaction.user.id, extra=tuple(details))
+
         card = ok("Giveaway Created", f"Posted in {target.mention}.\n[Jump to giveaway]({sent.jump_url})")
         if luck_text(rec):
             card.add_field(name="Luck Boost", value=luck_text(rec).replace("**Luck:** ", ""), inline=False)
@@ -604,21 +640,28 @@ class GiveawayCog(commands.Cog):
             await interaction.response.send_message(
                 embed=err("Nothing To Change", "Give at least one option to change."), ephemeral=True)
             return
+        changes = []
         if duration is not None:
             seconds = parse_duration(duration)
             if seconds is None or not MIN_SECONDS <= seconds <= MAX_SECONDS:
                 await interaction.response.send_message(
                     embed=err("Invalid Duration", "Use a duration between `30s` and `1y`."), ephemeral=True)
                 return
+            changes.append(f"Ends: <t:{rec['ends']}:R> \u2192 <t:{int(time.time()) + seconds}:R>")
             rec["ends"] = int(time.time()) + seconds
         if prize is not None:
+            changes.append(f"Prize: {rec['prize']} \u2192 {prize}")
             rec["prize"] = prize
         if winners is not None:
+            changes.append(f"Winners: {rec['winners']} \u2192 {winners}")
             rec["winners"] = int(winners)
         if host_message is not None:
+            changes.append("Message from host changed")
             rec["host_message"] = host_message
         await interaction.response.defer(ephemeral=True)
         await self._save(rec)
+        await self._log("Giveaway Edited", GOLD, rec, by=interaction.user.id,
+                        extra=(("Changes", "\n".join(changes)),))
         if not await self._refresh_message(rec):
             await interaction.followup.send(embed=err("Saved, But Could Not Update Message"), ephemeral=True)
             return
@@ -639,7 +682,7 @@ class GiveawayCog(commands.Cog):
                 embed=err("Already Ended", "That giveaway has already ended."), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
-        winners = await self.finish(rec, early=True)
+        winners = await self.finish(rec, early=True, by=interaction.user.id)
         text = ", ".join(m.mention for m in winners) or "No valid entries"
         await interaction.followup.send(
             embed=ok("Giveaway Ended", f"**{rec['prize']}**\nWinners: {text}"), ephemeral=True, allowed_mentions=NO_PINGS)
@@ -677,6 +720,7 @@ class GiveawayCog(commands.Cog):
         if message is not None:
             await self._refresh_message(rec, message)
         await self._announce(rec, picked, message, rerolled=True)
+        await self._log("Giveaway Rerolled", PURPLE, rec, by=interaction.user.id, winners=picked)
         await interaction.followup.send(
             embed=ok("Giveaway Rerolled", f"**{rec['prize']}**\nNew winner(s): " + ", ".join(m.mention for m in picked)),
             ephemeral=True, allowed_mentions=NO_PINGS)
@@ -696,6 +740,8 @@ class GiveawayCog(commands.Cog):
             except discord.HTTPException:
                 pass
         await self._drop(rec)
+        await self._log("Giveaway Deleted", RED, rec, by=interaction.user.id,
+                        extra=(("State", "Ended" if rec.get("ended") else "Was still running"),))
         await interaction.followup.send(
             embed=ok("Giveaway Deleted", f"**{rec['prize']}** was removed. No winners were picked."), ephemeral=True)
 
