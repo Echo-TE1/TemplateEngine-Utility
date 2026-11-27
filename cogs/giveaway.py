@@ -121,6 +121,8 @@ def build_layout(rec: Record) -> discord.ui.LayoutView:
     container.add_item(row)
 
     view = discord.ui.LayoutView(timeout=None)
+    if rec.get("ping"):  # the @everyone line sits at the top of the same message
+        view.add_item(discord.ui.TextDisplay(rec["ping"]))
     view.add_item(container)
     return view
 
@@ -603,22 +605,19 @@ class GiveawayCog(commands.Cog):
         rec: Record = dict(
             id=0, guild=interaction.guild_id, channel=target.id, host=interaction.user.id, prize=prize,
             winners=int(winners), ends=int(time.time()) + seconds, entries=[], ended=False, winner_ids=[],
-            past_winners=[], host_message=host_message or "", role=required_role.id if required_role else None,
+            past_winners=[], host_message=host_message or "", ping="@everyone" if ping_everyone else "", role=required_role.id if required_role else None,
             luck=int(luck.value) if luck else 1, luck_roles=luck_roles,
         )
         try:
-            sent = await target.send(view=build_layout(rec), allowed_mentions=NO_PINGS)
+            # the @everyone line is part of this one message, so it pings when the giveaway is posted
+            allowed = discord.AllowedMentions(everyone=True) if ping_everyone else NO_PINGS
+            sent = await target.send(view=build_layout(rec), allowed_mentions=allowed)
         except discord.HTTPException as exc:
             await interaction.followup.send(embed=err("Could Not Post Giveaway", f"`{exc}`"), ephemeral=True)
             return
         rec["id"] = sent.id
         self.records[sent.id] = rec
         await self._save(rec)
-        if ping_everyone:
-            try:
-                await target.send("@everyone", allowed_mentions=discord.AllowedMentions(everyone=True))
-            except discord.HTTPException as exc:
-                log.warning("Giveaway ping failed: %s", exc)
 
         details = []
         if luck_text(rec):
